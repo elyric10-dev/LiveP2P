@@ -46,7 +46,9 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 ## Delivery
 
 - Repo: https://github.com/elyric10-dev/LiveP2P
-- Vercel: pending
+- Vercel: https://live-p2p.vercel.app
+
+**Vercel env vars** — set `DATABASE_URL` and `NEXT_PUBLIC_MAPBOX_TOKEN` for Production (and Preview/Development if needed), then redeploy. Do **not** wrap values in quotes in the Vercel dashboard — paste the raw value only (e.g. `postgresql://user:pass@host/db?sslmode=require`, not `"postgresql://..."`). Quotes are fine in local `.env` but break vars on Vercel.
 
 ---
 
