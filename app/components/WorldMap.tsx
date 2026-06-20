@@ -126,17 +126,23 @@ export default function WorldMap({
           const el = document.createElement("button");
           el.className = "pulse-dot";
           el.style.background = dotColor(peer.id);
-          el.title = "Tap to connect";
+          el.title = peer.busy ? "In a conversation" : "Tap to connect";
           el.addEventListener("click", (e) => {
             e.stopPropagation();
-            if (canConnectRef.current) onPeerClickRef.current(peer.id);
+            if (canConnectRef.current && el.dataset.busy !== "1") {
+              onPeerClickRef.current(peer.id);
+            }
           });
           marker = new mapboxgl.Marker({ element: el })
             .setLngLat([peer.lng, peer.lat])
             .addTo(map);
           markers.set(peer.id, marker);
         }
-        marker.getElement().style.opacity = peer.busy ? "0.35" : "1";
+        const el = marker.getElement();
+        el.dataset.busy = peer.busy ? "1" : "0";
+        el.style.opacity = peer.busy ? "0.35" : "1";
+        el.style.cursor = peer.busy ? "not-allowed" : "pointer";
+        el.title = peer.busy ? "In a conversation" : "Tap to connect";
       }
 
       // Drop markers for peers that went offline / got filtered out.

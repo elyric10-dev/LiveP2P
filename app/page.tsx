@@ -211,8 +211,15 @@ export default function Home() {
   function processSignal(sig: SignalMsg) {
     switch (sig.type) {
       case "request": {
-        if (connRef.current.kind === "idle") {
+        const c = connRef.current;
+        if (c.kind === "idle") {
           setConn({ kind: "incoming", peerId: sig.fromId });
+        } else if (c.kind === "requesting" && c.peerId === sig.fromId) {
+          // Both users tapped each other — connect instead of declining.
+          if (requestTimer.current) clearTimeout(requestTimer.current);
+          startPeer(sig.fromId, false);
+          void sendSignal(sessionId, sig.fromId, "accept");
+          setConn({ kind: "connecting", peerId: sig.fromId });
         } else {
           void sendSignal(sessionId, sig.fromId, "decline");
         }
