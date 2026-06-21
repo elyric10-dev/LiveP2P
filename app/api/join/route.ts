@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "invalid coordinates" }, { status: 400 });
   }
 
-  const offset = applyPrivacyOffset(lat as number, lng as number);
+  const offset = applyPrivacyOffset(lat as number, lng as number, id);
 
   await prisma.presence.upsert({
     where: { id },
@@ -39,8 +39,8 @@ export async function POST(request: NextRequest) {
     update: {
       lat: offset.lat,
       lng: offset.lng,
-      busy: false,
       lastSeen: new Date(),
+      // Preserve busy on re-join (e.g. page refresh mid-chat).
     },
   });
 

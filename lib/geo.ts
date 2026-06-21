@@ -1,16 +1,33 @@
 // Privacy offset: move a real coordinate 1–3 km in a random direction so the
-// dot is placed *near* the user, never at their exact location. A fresh random
-// offset is generated each session (this runs once per join), so the same user
-// lands somewhere different every time.
+// dot is placed *near* the user, never at their exact location. When sessionId
+// is provided the offset is deterministic so refresh/re-join lands on the same dot.
 
 const KM_PER_DEG_LAT = 111.32;
+
+function hashSession(sessionId: string): number {
+  let hash = 0;
+  for (let i = 0; i < sessionId.length; i++) {
+    hash = (hash * 31 + sessionId.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
 
 export function applyPrivacyOffset(
   lat: number,
   lng: number,
+  sessionId?: string,
 ): { lat: number; lng: number } {
-  const distanceKm = 1 + Math.random() * 2; // 1–3 km
-  const bearing = Math.random() * 2 * Math.PI; // random direction
+  let distanceKm: number;
+  let bearing: number;
+
+  if (sessionId) {
+    const h = hashSession(sessionId);
+    distanceKm = 1 + ((h % 10_000) / 10_000) * 2;
+    bearing = ((h >> 12) % 10_000) / 10_000 * 2 * Math.PI;
+  } else {
+    distanceKm = 1 + Math.random() * 2;
+    bearing = Math.random() * 2 * Math.PI;
+  }
 
   const dLat = (distanceKm * Math.cos(bearing)) / KM_PER_DEG_LAT;
   const latRad = (lat * Math.PI) / 180;

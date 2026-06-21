@@ -583,7 +583,9 @@ function rotateGlobe(
 export default function WorldMap({
   peers,
   me,
+  skipIntro = false,
   connectionLine,
+  connectedPeerLocation,
   disconnectAnim,
   onDisconnectComplete,
   messageOrbs,
@@ -593,7 +595,9 @@ export default function WorldMap({
 }: {
   peers: PeerDot[];
   me: { lat: number; lng: number } | null;
+  skipIntro?: boolean;
   connectionLine: ConnectionLine | null;
+  connectedPeerLocation: { lat: number; lng: number } | null;
   disconnectAnim: DisconnectAnimation | null;
   onDisconnectComplete: () => void;
   messageOrbs: MessageOrb[];
@@ -610,9 +614,6 @@ export default function WorldMap({
   const rotateCompleteRef = useRef(false);
   const meCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   const cancelRotateRef = useRef<(() => void) | null>(null);
-  const peerCoordsCache = useRef<Map<string, { lat: number; lng: number }>>(
-    new Map(),
-  );
   const lineAnimStopRef = useRef<(() => void) | null>(null);
   const disconnectStopRef = useRef<(() => void) | null>(null);
   const orbAnimStopsRef = useRef<Map<string, () => void>>(new Map());
@@ -630,6 +631,25 @@ export default function WorldMap({
     onDisconnectCompleteRef.current = onDisconnectComplete;
   });
 
+  const skipIntroRef = useRef(skipIntro);
+  skipIntroRef.current = skipIntro;
+
+  function finishIntro(map: MapboxMap) {
+    if (introDoneRef.current) return;
+    introDoneRef.current = true;
+    flyStartedRef.current = true;
+    rotateCompleteRef.current = true;
+    setIntroComplete(true);
+    unlockMapInteraction(map);
+  }
+
+  function skipIntroJump(map: MapboxMap) {
+    if (!meCoordsRef.current) return;
+    const { lat, lng } = meCoordsRef.current;
+    map.jumpTo({ center: [lng, lat], zoom: USER_ZOOM, pitch: 0, bearing: 0 });
+    finishIntro(map);
+  }
+
   function tryFlyToUser(map: MapboxMap) {
     if (flyStartedRef.current || introDoneRef.current) return;
     if (!rotateCompleteRef.current || !meCoordsRef.current) return;
@@ -646,12 +666,17 @@ export default function WorldMap({
     });
 
     map.once("moveend", () => {
-      if (introDoneRef.current) return;
-      introDoneRef.current = true;
-      setIntroComplete(true);
-      unlockMapInteraction(map);
+      finishIntro(map);
     });
   }
+
+  // After refresh: skip globe rotation and jump straight to the user.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !skipIntro || !me || introDoneRef.current) return;
+    meCoordsRef.current = me;
+    skipIntroJump(map);
+  }, [me, ready, skipIntro]);
 
   // Initialise the map at full globe zoom.
   useEffect(() => {
@@ -685,6 +710,12 @@ export default function WorldMap({
         });
         setReady(true);
         lockMapInteraction(map);
+
+        if (skipIntroRef.current) {
+          rotateCompleteRef.current = true;
+          if (meCoordsRef.current) skipIntroJump(map);
+          return;
+        }
 
         if (prefersReducedMotion()) {
           rotateCompleteRef.current = true;
@@ -799,6 +830,7 @@ export default function WorldMap({
         el.style.opacity = peer.busy ? "0.35" : "1";
         el.style.cursor = peer.busy ? "not-allowed" : "pointer";
         el.title = peer.busy ? "In a conversation" : "Tap to connect";
+        marker.setLngLat([peer.lng, peer.lat]);
       }
 
       for (const [id, marker] of markers) {
@@ -824,22 +856,20 @@ export default function WorldMap({
       return;
     }
 
-    for (const p of peers) {
-      peerCoordsCache.current.set(p.id, { lat: p.lat, lng: p.lng });
-    }
-
     if (!connectionLine) {
       if (!disconnectAnim) clearConnectionLine(map);
       return;
     }
 
+    const live = peers.find((p) => p.id === connectionLine.peerId);
     const peer =
-      peers.find((p) => p.id === connectionLine.peerId) ??
-      (peerCoordsCache.current.has(connectionLine.peerId)
+      live ??
+      (connectedPeerLocation
         ? {
             id: connectionLine.peerId,
-            ...peerCoordsCache.current.get(connectionLine.peerId)!,
-            busy: false,
+            lat: connectedPeerLocation.lat,
+            lng: connectedPeerLocation.lng,
+            busy: true,
           }
         : null);
 
@@ -859,7 +889,7 @@ export default function WorldMap({
       lineAnimStopRef.current?.();
       lineAnimStopRef.current = null;
     };
-  }, [connectionLine, disconnectAnim, me, peers, ready, introComplete]);
+  }, [connectionLine, connectedPeerLocation, disconnectAnim, me, peers, ready, introComplete]);
 
   // End connection: line implodes, burst at center, shards return to each pin.
   useEffect(() => {

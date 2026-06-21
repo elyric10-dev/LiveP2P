@@ -9,6 +9,13 @@ import VideoPanel from "./components/VideoPanel";
 import { join, leave, poll, sendSignal } from "@/lib/api";
 import { PeerSession, type DescType, type PeerControl } from "@/lib/webrtc";
 import { POLL_INTERVAL_MS } from "@/lib/presence";
+import {
+  clearPendingReconnect,
+  consumePendingReconnect,
+  getOrCreateSessionId,
+  hasPendingReconnect,
+  savePendingReconnect,
+} from "@/lib/session";
 import { type ConnectionLine, type DisconnectAnimation, type MessageOrb, type PeerDot, type SignalMsg } from "@/lib/types";
 
 type Conn =
@@ -22,6 +29,7 @@ type VideoState = "none" | "requesting" | "incoming" | "active";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const REJECTED_LINE_MS = 2_500;
+const RECONNECT_WAIT_MS = 30_000;
 
 function connectionLineFromConn(conn: Conn): ConnectionLine | null {
   switch (conn.kind) {
@@ -38,7 +46,8 @@ function connectionLineFromConn(conn: Conn): ConnectionLine | null {
 
 export default function Home() {
   const [phase, setPhase] = useState<"gate" | "live">("gate");
-  const [sessionId] = useState(() => crypto.randomUUID());
+  const [sessionId, setSessionId] = useState("");
+  const [skipIntro, setSkipIntro] = useState(false);
   const [peers, setPeers] = useState<PeerDot[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -68,6 +77,9 @@ export default function Home() {
   const connectedPeerCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   const msgId = useRef(0);
   const requestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectWaitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttempted = useRef(false);
+  const blockReconnectSave = useRef(false);
   const rejectedLineTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const orbId = useRef(0);
   const [lineFlash, setLineFlash] = useState<ConnectionLine | null>(null);
@@ -120,6 +132,8 @@ export default function Home() {
 
   function teardown(message?: string, rejectedPeerId?: string) {
     if (requestTimer.current) clearTimeout(requestTimer.current);
+    if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
+    clearPendingReconnect();
     peerRef.current?.close();
     peerRef.current = null;
     setLocalStream(null);
@@ -159,8 +173,11 @@ export default function Home() {
     setDisconnecting(true);
     setMessageOrbs([]);
     pendingNoticeRef.current = message ?? null;
+    blockReconnectSave.current = true;
 
     if (requestTimer.current) clearTimeout(requestTimer.current);
+    if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
+    clearPendingReconnect();
     peerRef.current?.close();
     peerRef.current = null;
     setLocalStream(null);
@@ -177,12 +194,14 @@ export default function Home() {
 
   function completeDisconnect() {
     const notice = pendingNoticeRef.current;
+    clearPendingReconnect();
     setDisconnectAnim(null);
     setDisconnecting(false);
     pendingNoticeRef.current = null;
     setMessages([]);
     setConn({ kind: "idle" });
     connectedPeerCoordsRef.current = null;
+    blockReconnectSave.current = false;
     if (notice) showNotice(notice);
   }
 
@@ -198,15 +217,44 @@ export default function Home() {
       onControl: (ctrl) => handleControl(ctrl),
       onRemoteStream: (stream) => setRemoteStream(stream),
       onConnectionState: (state) => {
-        if (state === "failed") {
+        const c = connRef.current;
+        if (state !== "failed" && state !== "disconnected") return;
+
+        if (c.kind === "connected") {
+          // Peer may have refreshed — wait for reconnect signal.
+          peerRef.current?.close();
+          peerRef.current = null;
+          setConn({ kind: "connecting", peerId: c.peerId });
+          showNotice("Stranger reconnecting…");
+          if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
+          reconnectWaitTimer.current = setTimeout(() => {
+            if (
+              connRef.current.kind === "connecting" &&
+              connRef.current.peerId === c.peerId
+            ) {
+              beginDisconnect("Connection lost.");
+            }
+          }, RECONNECT_WAIT_MS);
+          return;
+        }
+
+        if (c.kind === "connecting" && !reconnectAttempted.current) {
           beginDisconnect("Connection failed (network).");
         }
       },
       onChannelOpen: () => {
+        if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
         setConn({ kind: "connected", peerId });
       },
     });
     peerRef.current = ps;
+  }
+
+  function attemptReconnect(peerId: string) {
+    setConn({ kind: "connecting", peerId });
+    startPeer(peerId, true);
+    void sendSignal(sessionId, peerId, "reconnect");
+    showNotice("Reconnecting…");
   }
 
   function handleControl(ctrl: PeerControl) {
@@ -372,6 +420,20 @@ export default function Home() {
         }
         break;
       }
+      case "reconnect": {
+        const c = connRef.current;
+        if (
+          (c.kind === "connected" || c.kind === "connecting") &&
+          c.peerId === sig.fromId
+        ) {
+          if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
+          peerRef.current?.close();
+          peerRef.current = null;
+          startPeer(sig.fromId, false);
+          setConn({ kind: "connecting", peerId: sig.fromId });
+        }
+        break;
+      }
       case "end": {
         const c = connRef.current;
         if (
@@ -436,19 +498,32 @@ export default function Home() {
   }, [phase, sessionId]);
 
   useEffect(() => {
+    setSessionId(getOrCreateSessionId());
+    if (hasPendingReconnect()) {
+      setSkipIntro(true);
+      setPhase("live");
+    }
+  }, []);
+
+  useEffect(() => {
     if (!sessionId || phase !== "live") return;
-    const onLeave = () => leave(sessionId);
-    window.addEventListener("pagehide", onLeave);
-    window.addEventListener("beforeunload", onLeave);
-    return () => {
-      window.removeEventListener("pagehide", onLeave);
-      window.removeEventListener("beforeunload", onLeave);
+    const onPageHide = () => {
+      if (blockReconnectSave.current) {
+        leave(sessionId);
+        return;
+      }
+      const c = connRef.current;
+      if (c.kind === "connecting" || c.kind === "connected") {
+        savePendingReconnect(c.peerId);
+        return;
+      }
+      leave(sessionId);
     };
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
   }, [sessionId, phase]);
 
-  async function handleEnter() {
-    setPhase("live");
-
+  function enterLiveMap() {
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const lat = pos.coords.latitude;
@@ -467,8 +542,35 @@ export default function Home() {
     );
   }
 
+  // Restore map + reconnect after refresh (skips entry gate).
+  useEffect(() => {
+    if (phase !== "live" || !sessionId || myLocation) return;
+    enterLiveMap();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once when live without location
+  }, [phase, sessionId]);
+
+  useEffect(() => {
+    if (phase !== "live" || !sessionId || !myLocation || reconnectAttempted.current) {
+      return;
+    }
+    const pending = consumePendingReconnect();
+    if (!pending) return;
+    reconnectAttempted.current = true;
+    attemptReconnect(pending.peerId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reconnect once after refresh
+  }, [phase, sessionId, myLocation]);
+
+  async function handleEnter() {
+    setPhase("live");
+    enterLiveMap();
+  }
+
   if (phase === "gate") {
     return <EntryGate onEnter={handleEnter} />;
+  }
+
+  if (!sessionId) {
+    return null;
   }
 
   const inChat =
@@ -480,12 +582,21 @@ export default function Home() {
       ? null
       : lineFlash ?? connectionLineFromConn(conn);
 
+  const connectedPeerLocation =
+    conn.kind === "connecting" || conn.kind === "connected"
+      ? (peers.find((p) => p.id === conn.peerId) ??
+        connectedPeerCoordsRef.current ??
+        null)
+      : null;
+
   return (
     <main className="fixed inset-0 overflow-hidden">
       <WorldMap
         peers={peers}
         me={myLocation}
+        skipIntro={skipIntro}
         connectionLine={connectionLine}
+        connectedPeerLocation={connectedPeerLocation}
         disconnectAnim={disconnectAnim}
         onDisconnectComplete={completeDisconnect}
         messageOrbs={messageOrbs}
