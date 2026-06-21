@@ -5,7 +5,15 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import type { Map as MapboxMap, Marker } from "mapbox-gl";
 import type { PeerDot } from "@/lib/types";
 
-const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "pk.eyJ1IjoicHVsc2UtbWFwIiwiYSI6ImNrMDBkZW1vMDAwMDAwMDAifQ.AAAAAAAAAAAAAAAAAAAAAA";
+const TOKEN =
+  process.env.NEXT_PUBLIC_MAPBOX_TOKEN ??
+  "pk.eyJ1IjoicHVsc2UtbWFwIiwiYSI6ImNrMDBkZW1vMDAwMDAwMDAifQ.AAAAAAAAAAAAAAAAAAAAAA";
+
+const GLOBE_CENTER: [number, number] = [0, 20];
+const GLOBE_ZOOM = 1.0;
+const USER_ZOOM = 10;
+const ROTATE_DURATION_MS = 2800;
+const FLY_DURATION_MS = 2500;
 
 function dotColor(id: string): string {
   let hash = 0;
@@ -13,6 +21,62 @@ function dotColor(id: string): string {
     hash = (hash * 31 + id.charCodeAt(i)) | 0;
   }
   return `hsl(${Math.abs(hash) % 360}, 70%, 60%)`;
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+function lockMapInteraction(map: MapboxMap) {
+  map.dragPan.disable();
+  map.dragRotate.disable();
+  map.scrollZoom.disable();
+  map.boxZoom.disable();
+  map.doubleClickZoom.disable();
+  map.touchZoomRotate.disable();
+}
+
+function unlockMapInteraction(map: MapboxMap) {
+  map.dragPan.enable();
+  map.dragRotate.enable();
+  map.scrollZoom.enable();
+  map.boxZoom.enable();
+  map.doubleClickZoom.enable();
+  map.touchZoomRotate.enable();
+}
+
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+// Rotate the globe horizontally (around its pole axis) by animating longitude —
+// not bearing, which tilts the view on a diagonal axis on globe projection.
+function rotateGlobe(
+  map: MapboxMap,
+  durationMs: number,
+  onComplete: () => void,
+): () => void {
+  const { lng: startLng, lat } = map.getCenter();
+  const zoom = map.getZoom();
+  const t0 = performance.now();
+  let frameId = 0;
+
+  const tick = (now: number) => {
+    const t = Math.min((now - t0) / durationMs, 1);
+    const lng = startLng + 360 * easeInOutCubic(t);
+    map.jumpTo({ center: [lng, lat], zoom, pitch: 0, bearing: 0 });
+    if (t < 1) {
+      frameId = requestAnimationFrame(tick);
+    } else {
+      onComplete();
+    }
+  };
+
+  frameId = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(frameId);
 }
 
 export default function WorldMap({
@@ -30,10 +94,14 @@ export default function WorldMap({
   const mapRef = useRef<MapboxMap | null>(null);
   const markersRef = useRef<Map<string, Marker>>(new Map());
   const meMarkerRef = useRef<Marker | null>(null);
+  const introDoneRef = useRef(false);
+  const flyStartedRef = useRef(false);
+  const rotateCompleteRef = useRef(false);
+  const meCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
+  const cancelRotateRef = useRef<(() => void) | null>(null);
   const [ready, setReady] = useState(false);
+  const [introComplete, setIntroComplete] = useState(false);
 
-  // Marker click handlers are bound once, so read the live click handler +
-  // connectability through refs (synced in an effect, never during render).
   const onPeerClickRef = useRef(onPeerClick);
   const canConnectRef = useRef(canConnect);
   useEffect(() => {
@@ -41,7 +109,30 @@ export default function WorldMap({
     canConnectRef.current = canConnect;
   });
 
-  // Initialise the map once.
+  function tryFlyToUser(map: MapboxMap) {
+    if (flyStartedRef.current || introDoneRef.current) return;
+    if (!rotateCompleteRef.current || !meCoordsRef.current) return;
+
+    flyStartedRef.current = true;
+    const { lat, lng } = meCoordsRef.current;
+    const reduced = prefersReducedMotion();
+
+    map.flyTo({
+      center: [lng, lat],
+      zoom: USER_ZOOM,
+      duration: reduced ? 800 : FLY_DURATION_MS,
+      essential: true,
+    });
+
+    map.once("moveend", () => {
+      if (introDoneRef.current) return;
+      introDoneRef.current = true;
+      setIntroComplete(true);
+      unlockMapInteraction(map);
+    });
+  }
+
+  // Initialise the map at full globe zoom.
   useEffect(() => {
     if (!TOKEN || !containerRef.current) return;
     let cancelled = false;
@@ -54,19 +145,45 @@ export default function WorldMap({
       const map = new mapboxgl.Map({
         container: containerRef.current,
         style: "mapbox://styles/mapbox/dark-v11",
-        // Open centered on the user if we know where they are, else world view.
-        center: me ? [me.lng, me.lat] : [0, 20],
-        zoom: me ? 4 : 1.4,
+        center: GLOBE_CENTER,
+        zoom: GLOBE_ZOOM,
+        pitch: 0,
+        bearing: 0,
         attributionControl: true,
       });
+
       map.on("load", () => {
-        if (!cancelled) setReady(true);
+        if (cancelled) return;
+        map.setProjection("globe");
+        map.setFog({
+          color: "rgb(5, 5, 8)",
+          "high-color": "rgb(12, 12, 20)",
+          "horizon-blend": 0.08,
+          "space-color": "rgb(0, 0, 0)",
+          "star-intensity": 0.15,
+        });
+        setReady(true);
+        lockMapInteraction(map);
+
+        if (prefersReducedMotion()) {
+          rotateCompleteRef.current = true;
+          tryFlyToUser(map);
+          return;
+        }
+
+        cancelRotateRef.current = rotateGlobe(map, ROTATE_DURATION_MS, () => {
+          rotateCompleteRef.current = true;
+          tryFlyToUser(map);
+        });
       });
+
       mapRef.current = map;
     })();
 
     return () => {
       cancelled = true;
+      cancelRotateRef.current?.();
+      cancelRotateRef.current = null;
       markers.forEach((m) => m.remove());
       markers.clear();
       meMarkerRef.current?.remove();
@@ -74,12 +191,22 @@ export default function WorldMap({
       mapRef.current?.remove();
       mapRef.current = null;
       setReady(false);
+      flyStartedRef.current = false;
+      introDoneRef.current = false;
+      rotateCompleteRef.current = false;
+      meCoordsRef.current = null;
     };
-    // `me` is only read for the initial center; we don't want to re-init on change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Show / move the user's own "you are here" pin.
+  // Store location and fly only after the full globe rotation finishes.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !me) return;
+    meCoordsRef.current = me;
+    tryFlyToUser(map);
+  }, [me, ready]);
+
+  // User pin — visible during rotation once location is known.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || !me) return;
@@ -93,8 +220,10 @@ export default function WorldMap({
         el.className = "pulse-me";
         el.title = "You are here";
         el.innerHTML = `<span class="pulse-me-label">Me</span>📍`;
-        // anchor "bottom" → the pin's tip sits on the exact coordinate.
-        meMarkerRef.current = new mapboxgl.Marker({ element: el, anchor: "bottom" })
+        meMarkerRef.current = new mapboxgl.Marker({
+          element: el,
+          anchor: "bottom",
+        })
           .setLngLat([me.lng, me.lat])
           .addTo(map);
       } else {
@@ -107,10 +236,10 @@ export default function WorldMap({
     };
   }, [me, ready]);
 
-  // Reconcile markers whenever the peer list changes (or the map becomes ready).
+  // Peer dots — only after intro completes.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready) return;
+    if (!map || !ready || !introComplete) return;
     let cancelled = false;
 
     (async () => {
@@ -145,7 +274,6 @@ export default function WorldMap({
         el.title = peer.busy ? "In a conversation" : "Tap to connect";
       }
 
-      // Drop markers for peers that went offline / got filtered out.
       for (const [id, marker] of markers) {
         if (!seen.has(id)) {
           marker.remove();
@@ -157,26 +285,27 @@ export default function WorldMap({
     return () => {
       cancelled = true;
     };
-  }, [peers, ready]);
+  }, [peers, ready, introComplete]);
 
   return (
-    <div className="absolute inset-0">
-      <div ref={containerRef} className="h-full w-full bg-zinc-900" />
+    <div className="absolute inset-0 bg-black">
+      <div ref={containerRef} className="h-full w-full bg-black" />
 
       {!TOKEN && (
         <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
           <p className="max-w-md rounded-lg bg-zinc-800 p-4 text-sm text-zinc-200">
             Set{" "}
-            <code className="text-emerald-400">NEXT_PUBLIC_MAPBOX_TOKEN</code> in{" "}
-            <code>.env</code> to load the map.
+            <code className="text-emerald-400">NEXT_PUBLIC_MAPBOX_TOKEN</code>{" "}
+            in <code>.env</code> to load the map.
           </p>
         </div>
       )}
 
-      {/* Online count */}
-      <div className="absolute bottom-4 left-4 rounded-full bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-300 backdrop-blur">
-        {peers.length} online
-      </div>
+      {introComplete && (
+        <div className="pointer-events-none absolute top-4 left-4 z-10 rounded-full bg-zinc-900/90 px-3 py-1.5 text-xs font-medium text-zinc-100 shadow-lg backdrop-blur">
+          {peers.length} online
+        </div>
+      )}
     </div>
   );
 }

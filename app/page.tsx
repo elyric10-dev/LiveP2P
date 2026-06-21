@@ -310,14 +310,29 @@ export default function Home() {
     };
   }, [sessionId, phase]);
 
-  async function handleReady(lat: number, lng: number) {
-    setMyLocation({ lat, lng });
-    await join(sessionId, lat, lng);
+  async function handleEnter() {
     setPhase("live");
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setMyLocation({ lat, lng });
+        await join(sessionId, lat, lng);
+      },
+      (err) => {
+        showNotice(
+          err.code === err.PERMISSION_DENIED
+            ? "Location permission is required to place you on the map."
+            : "Couldn't get your location. Please try again.",
+        );
+      },
+      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
+    );
   }
 
   if (phase === "gate") {
-    return <EntryGate onReady={handleReady} />;
+    return <EntryGate onEnter={handleEnter} />;
   }
 
   const inChat = conn.kind === "connecting" || conn.kind === "connected";
