@@ -9,7 +9,7 @@ import VideoPanel from "./components/VideoPanel";
 import { join, leave, poll, sendSignal } from "@/lib/api";
 import { PeerSession, type DescType, type PeerControl } from "@/lib/webrtc";
 import { POLL_INTERVAL_MS } from "@/lib/presence";
-import { type PeerDot, type SignalMsg } from "@/lib/types";
+import { type ConnectionLine, type DisconnectAnimation, type MessageOrb, type PeerDot, type SignalMsg } from "@/lib/types";
 
 type Conn =
   | { kind: "idle" }
@@ -21,6 +21,20 @@ type Conn =
 type VideoState = "none" | "requesting" | "incoming" | "active";
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const REJECTED_LINE_MS = 2_500;
+
+function connectionLineFromConn(conn: Conn): ConnectionLine | null {
+  switch (conn.kind) {
+    case "requesting":
+    case "incoming":
+    case "connecting":
+      return { peerId: conn.peerId, status: "pending" };
+    case "connected":
+      return { peerId: conn.peerId, status: "connected" };
+    default:
+      return null;
+  }
+}
 
 export default function Home() {
   const [phase, setPhase] = useState<"gate" | "live">("gate");
@@ -49,8 +63,18 @@ export default function Home() {
   };
 
   const peerRef = useRef<PeerSession | null>(null);
+  const peersRef = useRef(peers);
+  const myLocationRef = useRef(myLocation);
+  const connectedPeerCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   const msgId = useRef(0);
   const requestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rejectedLineTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const orbId = useRef(0);
+  const [lineFlash, setLineFlash] = useState<ConnectionLine | null>(null);
+  const [messageOrbs, setMessageOrbs] = useState<MessageOrb[]>([]);
+  const [disconnectAnim, setDisconnectAnim] = useState<DisconnectAnimation | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const pendingNoticeRef = useRef<string | null>(null);
 
   function showNotice(text: string) {
     setNotice(text);
@@ -61,7 +85,40 @@ export default function Home() {
     setMessages((prev) => [...prev, { id: msgId.current++, mine, text }]);
   }
 
-  function teardown(message?: string) {
+  function spawnMessageOrb(direction: MessageOrb["direction"], peerId: string) {
+    const me = myLocationRef.current;
+    const livePeer = peersRef.current.find((p) => p.id === peerId);
+    const peerCoords =
+      livePeer != null
+        ? { lat: livePeer.lat, lng: livePeer.lng }
+        : connectedPeerCoordsRef.current;
+    if (!me || !peerCoords) return;
+
+    const from =
+      direction === "outgoing" ? me : peerCoords;
+    const to =
+      direction === "outgoing" ? peerCoords : me;
+
+    setMessageOrbs((prev) => [
+      ...prev,
+      { id: `orb-${orbId.current++}`, direction, from, to },
+    ]);
+  }
+
+  function completeMessageOrb(id: string) {
+    setMessageOrbs((prev) => prev.filter((o) => o.id !== id));
+  }
+
+  function flashRejectedLine(peerId: string) {
+    if (rejectedLineTimer.current) clearTimeout(rejectedLineTimer.current);
+    setLineFlash({ peerId, status: "rejected" });
+    rejectedLineTimer.current = setTimeout(() => {
+      setLineFlash(null);
+      rejectedLineTimer.current = null;
+    }, REJECTED_LINE_MS);
+  }
+
+  function teardown(message?: string, rejectedPeerId?: string) {
     if (requestTimer.current) clearTimeout(requestTimer.current);
     peerRef.current?.close();
     peerRef.current = null;
@@ -69,8 +126,64 @@ export default function Home() {
     setRemoteStream(null);
     setVideo("none");
     setMessages([]);
+    setMessageOrbs([]);
+    setDisconnectAnim(null);
+    setDisconnecting(false);
+    pendingNoticeRef.current = null;
     setConn({ kind: "idle" });
+    connectedPeerCoordsRef.current = null;
+    if (rejectedPeerId) flashRejectedLine(rejectedPeerId);
     if (message) showNotice(message);
+  }
+
+  function beginDisconnect(message?: string) {
+    if (disconnecting) return;
+
+    const c = connRef.current;
+    if (c.kind !== "connecting" && c.kind !== "connected") {
+      teardown(message);
+      return;
+    }
+
+    const me = myLocationRef.current;
+    const livePeer = peersRef.current.find((p) => p.id === c.peerId);
+    const peerCoords =
+      livePeer != null
+        ? { lat: livePeer.lat, lng: livePeer.lng }
+        : connectedPeerCoordsRef.current;
+    if (!me || !peerCoords) {
+      teardown(message);
+      return;
+    }
+
+    setDisconnecting(true);
+    setMessageOrbs([]);
+    pendingNoticeRef.current = message ?? null;
+
+    if (requestTimer.current) clearTimeout(requestTimer.current);
+    peerRef.current?.close();
+    peerRef.current = null;
+    setLocalStream(null);
+    setRemoteStream(null);
+    setVideo("none");
+
+    setDisconnectAnim({
+      id: `dc-${Date.now()}`,
+      me,
+      peer: peerCoords,
+      wasConnected: c.kind === "connected",
+    });
+  }
+
+  function completeDisconnect() {
+    const notice = pendingNoticeRef.current;
+    setDisconnectAnim(null);
+    setDisconnecting(false);
+    pendingNoticeRef.current = null;
+    setMessages([]);
+    setConn({ kind: "idle" });
+    connectedPeerCoordsRef.current = null;
+    if (notice) showNotice(notice);
   }
 
   function startPeer(peerId: string, initiator: boolean) {
@@ -78,12 +191,15 @@ export default function Home() {
       onSignal: (type: DescType, payload: string) => {
         void sendSignal(sessionId, peerId, type, payload);
       },
-      onChat: (text) => addMessage(false, text),
+      onChat: (text) => {
+        addMessage(false, text);
+        spawnMessageOrb("incoming", peerId);
+      },
       onControl: (ctrl) => handleControl(ctrl),
       onRemoteStream: (stream) => setRemoteStream(stream),
       onConnectionState: (state) => {
         if (state === "failed") {
-          teardown("Connection failed (network).");
+          beginDisconnect("Connection failed (network).");
         }
       },
       onChannelOpen: () => {
@@ -138,7 +254,7 @@ export default function Home() {
         connRef.current.peerId === peerId
       ) {
         void sendSignal(sessionId, peerId, "end");
-        teardown("No answer.");
+        teardown("No answer.", peerId);
       }
     }, REQUEST_TIMEOUT_MS);
   }
@@ -169,7 +285,7 @@ export default function Home() {
     if (c.kind === "connecting" || c.kind === "connected") {
       void sendSignal(sessionId, c.peerId, "end");
     }
-    teardown();
+    beginDisconnect();
   }
 
   function startVideoRequest() {
@@ -238,7 +354,7 @@ export default function Home() {
         const c = connRef.current;
         if (c.kind === "requesting" && c.peerId === sig.fromId) {
           if (requestTimer.current) clearTimeout(requestTimer.current);
-          teardown("Request declined.");
+          teardown("Request declined.", sig.fromId);
         }
         break;
       }
@@ -265,7 +381,7 @@ export default function Home() {
           c.peerId === sig.fromId
         ) {
           if (c.kind === "incoming") setConn({ kind: "idle" });
-          else teardown("Stranger disconnected.");
+          else beginDisconnect("Stranger disconnected.");
         }
         break;
       }
@@ -276,6 +392,26 @@ export default function Home() {
   useEffect(() => {
     processSignalRef.current = processSignal;
   });
+
+  useEffect(() => {
+    peersRef.current = peers;
+  }, [peers]);
+
+  useEffect(() => {
+    myLocationRef.current = myLocation;
+  }, [myLocation]);
+
+  useEffect(() => {
+    const c = connRef.current;
+    if (c.kind !== "connecting" && c.kind !== "connected") {
+      connectedPeerCoordsRef.current = null;
+      return;
+    }
+    const live = peers.find((p) => p.id === c.peerId);
+    if (live) {
+      connectedPeerCoordsRef.current = { lat: live.lat, lng: live.lng };
+    }
+  }, [peers, conn]);
 
   useEffect(() => {
     if (phase !== "live" || !sessionId) return;
@@ -335,15 +471,27 @@ export default function Home() {
     return <EntryGate onEnter={handleEnter} />;
   }
 
-  const inChat = conn.kind === "connecting" || conn.kind === "connected";
+  const inChat =
+    conn.kind === "connecting" ||
+    conn.kind === "connected" ||
+    disconnecting;
+  const connectionLine =
+    disconnectAnim || disconnecting
+      ? null
+      : lineFlash ?? connectionLineFromConn(conn);
 
   return (
     <main className="fixed inset-0 overflow-hidden">
       <WorldMap
         peers={peers}
         me={myLocation}
+        connectionLine={connectionLine}
+        disconnectAnim={disconnectAnim}
+        onDisconnectComplete={completeDisconnect}
+        messageOrbs={messageOrbs}
+        onMessageOrbComplete={completeMessageOrb}
         onPeerClick={requestConnection}
-        canConnect={conn.kind === "idle"}
+        canConnect={conn.kind === "idle" && !disconnecting}
       />
 
       {notice && (
@@ -377,11 +525,16 @@ export default function Home() {
       {inChat && (
         <ChatPanel
           messages={messages}
-          connected={conn.kind === "connected"}
+          connected={conn.kind === "connected" && !disconnecting}
+          exiting={disconnecting}
           videoBusy={video !== "none"}
           onSend={(text) => {
             peerRef.current?.sendChat(text);
             addMessage(true, text);
+            const c = connRef.current;
+            if (c.kind === "connected") {
+              spawnMessageOrb("outgoing", c.peerId);
+            }
           }}
           onStartVideo={startVideoRequest}
           onEnd={endConnection}

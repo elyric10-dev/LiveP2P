@@ -30,3 +30,27 @@ export interface PollResponse {
   peers: PeerDot[];
   signals: SignalMsg[];
 }
+
+/** Map line from me → peer while connecting. */
+export type ConnectionLineStatus = "pending" | "connected" | "rejected";
+
+export interface ConnectionLine {
+  peerId: string;
+  status: ConnectionLineStatus;
+}
+
+/** Animated orb flying along the connection when a chat message is sent/received. */
+export interface MessageOrb {
+  id: string;
+  direction: "outgoing" | "incoming";
+  from: { lat: number; lng: number };
+  to: { lat: number; lng: number };
+}
+
+/** Snapshot coords for the end-connection map animation. */
+export interface DisconnectAnimation {
+  id: string;
+  me: { lat: number; lng: number };
+  peer: { lat: number; lng: number };
+  wasConnected: boolean;
+}

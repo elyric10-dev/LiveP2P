@@ -12,6 +12,7 @@ export default function ChatPanel({
   messages,
   connected,
   videoBusy,
+  exiting = false,
   onSend,
   onStartVideo,
   onEnd,
@@ -19,6 +20,7 @@ export default function ChatPanel({
   messages: ChatMessage[];
   connected: boolean;
   videoBusy: boolean;
+  exiting?: boolean;
   onSend: (text: string) => void;
   onStartVideo: () => void;
   onEnd: () => void;
@@ -39,7 +41,9 @@ export default function ChatPanel({
   }
 
   return (
-    <div className="absolute inset-y-0 right-0 z-20 flex w-full max-w-md flex-col border-l border-zinc-800 bg-zinc-950 text-zinc-100 shadow-2xl">
+    <div
+      className={`absolute inset-y-0 right-0 z-20 flex w-full max-w-md flex-col border-l border-zinc-800 bg-zinc-950 text-zinc-100 shadow-2xl${exiting ? " chat-panel-exiting" : ""}`}
+    >
       <header className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
         <div>
           <p className="font-semibold">Stranger</p>

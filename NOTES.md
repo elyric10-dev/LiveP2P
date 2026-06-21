@@ -29,21 +29,28 @@
 
 **Done (partial)**
 - **Entry gate:** "Enter Pulse" switches to the map immediately — no "Locating…" screen. Geolocation runs in the background while the globe is visible.
-- **Cinematic globe intro:**
+- **Cinematic globe intro** (`12e0eaf`):
   - Mapbox **globe projection** + dark space fog (3D Earth on black background).
   - Starts at full zoom-out (`zoom 1`).
   - **Horizontal axis rotation** — animates longitude 360° (not bearing, which tilted on a diagonal axis).
-  - One full rotation (~2.8s, ease-in/out), then `flyTo` user location at `zoom 4`.
+  - One full rotation (~2.8s, ease-in/out), then `flyTo` user location at `zoom 10`.
   - HUD and peer dots hidden until intro completes; online count moved to top-left.
+- **Map connection visuals** *(staged, pending commit)*:
+  - **Status line** from Me → peer while connecting: orange dot-line + glow (pending), green gradient beam (connected), red dot-line flash (rejected).
+  - **Message orbs:** on send/receive, a glowing orb travels along the link — emerald (outgoing) vs violet (incoming).
+  - **Disconnect sequence:** line snaps red, recedes from both pins toward center with red embers, final burst at midpoint; chat panel slides out; WebRTC closes immediately.
 
 **Decisions / trade-offs**
 - Longitude animation via `requestAnimationFrame` — Mapbox `easeTo` bearing cannot do a full 360° (0 === 360).
 - Intro runs once per session; map interaction locked until fly-in finishes.
-- `prefers-reduced-motion`: skip rotation, short fly only.
+- `prefers-reduced-motion`: skip rotation, short fly only; disconnect/orb animations also respect this.
+- Mapbox markers use an outer wrapper — scale/opacity animate on inner elements so Mapbox `transform` positioning is not overwritten.
+- Message orb + disconnect coords are snapshotted at event time (not looked up live from peers) so animation stays stable if presence hiccups.
+- `line-trim-offset` values are clamped to `[0, 0.5]` — Mapbox rejects tiny negative floats from easing math.
 
 **Still to do**
 - Polish entry screen (aurora hero, privacy chips).
-- Chat/video panels, connection prompts, glass UI, mobile bottom sheet.
+- Glass UI, connection prompts, mobile bottom sheet for chat/video.
 
 ---
 
@@ -116,7 +123,7 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 
 ---
 
-### *(pending)* — feat(ui): add cinematic globe intro on Enter Pulse
+### `12e0eaf` — feat(ui): add cinematic globe intro on Enter Pulse
 **Phase:** 2  
 **Files:** `app/components/EntryGate.tsx`, `app/components/WorldMap.tsx`, `app/page.tsx`, `NOTES.md`
 
@@ -126,20 +133,39 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
   - Mapbox globe projection + space fog; black background.
   - Always start at full zoom-out (`zoom 1`).
   - Horizontal axis rotation via longitude animation (~2.8s, ease-in/out).
-  - Full rotation completes before `flyTo` user at `zoom 4`.
+  - Full rotation completes before `flyTo` user at `zoom 10`.
   - Lock map interaction during intro; hide HUD/peers until fly-in finishes.
   - Online count moved to top-left (avoids Mapbox attribution overlap).
   - `prefers-reduced-motion`: skip rotation, short fly only.
-- **`NOTES.md`** — Phase 2 progress + this change history.
+- **`NOTES.md`** — Phase 2 progress + change history.
+
+---
+
+### *(pending)* — feat(map): connection lines, message orbs, and disconnect animation
+**Phase:** 2  
+**Files:** `app/components/WorldMap.tsx`, `app/page.tsx`, `app/components/ChatPanel.tsx`, `app/globals.css`, `lib/types.ts`, `NOTES.md`
+
+- **`lib/types.ts`** — `ConnectionLine`, `MessageOrb`, `DisconnectAnimation` types.
+- **`app/page.tsx`**:
+  - Derive connection line state from conn (pending / connected / rejected flash).
+  - Spawn message orbs on send/receive with snapshotted from/to coords.
+  - `beginDisconnect()` — close WebRTC immediately, play map animation, then reset to idle.
+  - Chat stays visible with `exiting` slide-out during disconnect.
+- **`app/components/WorldMap.tsx`**:
+  - Dual-layer Mapbox line (glow + core): orange marching dots (pending), green gradient (connected).
+  - Message orb markers with inner-element animation (avoids Mapbox transform conflict).
+  - Disconnect: red gradient line, `line-trim-offset` collapse from both ends, red embers → center burst.
+- **`app/components/ChatPanel.tsx`** — `exiting` prop triggers slide-out animation.
+- **`app/globals.css`** — orb, disconnect burst/ember, chat-panel-exit styles.
 
 **Suggested commit message:**
 ```
-feat(ui): add cinematic globe intro on Enter Pulse
+feat(map): add connection lines, message orbs, and disconnect animation
 
-- Enter map immediately; geolocation and join run in parallel
-- Globe projection with space fog; full zoom-out on load
-- Horizontal axis rotation via longitude animation, then flyTo user
-- Lock map interaction and hide HUD/peers until intro completes
+- Status line from Me to peer: orange pending dots, green connected beam, red rejected flash
+- Chat message orbs travel the link (emerald sent, violet received)
+- End connection: red line fades inward from both pins and vanishes at center
+- Chat panel slides out during disconnect; WebRTC closes immediately
 ```
 
 ---
@@ -152,4 +178,5 @@ feat(ui): add cinematic globe intro on Enter Pulse
 | `0a354aa` | Initial | setup |
 | `05fdaad` | Fixed WebRTC "Connection failed (network)" | 1 |
 | `625baa3` | Update Vercel deployment link | delivery |
-| *(pending)* | feat(ui): add cinematic globe intro on Enter Pulse | 2 |
+| `12e0eaf` | feat(ui): add cinematic globe intro on Enter Pulse | 2 |
+| *(pending)* | feat(map): connection lines, message orbs, and disconnect animation | 2 |
