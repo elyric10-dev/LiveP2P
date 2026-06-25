@@ -3,6 +3,7 @@
 ## Phase 1 — Make it run
 
 **Done**
+
 - Configured `.env` (Neon Postgres + Mapbox token).
 - Ran `npx prisma generate` and `npx prisma db push`.
 - Fixed peers not showing: Prisma Client wasn't generated after `npm install`.
@@ -17,9 +18,11 @@
   - Chat used `t: "msg"` but receiver expected `t: "chat"`.
 
 **Still to fix**
+
 - Other starter bugs may surface during full chat → video testing.
 
 **Assumptions**
+
 - Run `npx prisma generate` after every `npm install` (dev doesn't do this automatically).
 - Test with two browser profiles + different mock locations in DevTools → Sensors.
 
@@ -28,38 +31,52 @@
 ## Phase 2 — Make it good
 
 **Done (partial)**
-- **Entry gate:** "Enter Pulse" switches to the map immediately — no "Locating…" screen. Geolocation runs in the background while the globe is visible.
+
+- **Milky Way entry gate** _(committed with scroll entry)_:
+  - **Three.js galaxy** — spiral arms, lavender/purple/pink palette (`#E6E6FA`, `#D8BFD8`, `#6A0DAD`, `#4B0082`), persistent space ambience behind the globe.
+  - **Scroll journey** — ~380vh scroll dives from wide galaxy view into Earth; Mapbox globe fades in on top with **transparent space** so stars sit **behind** the sphere (not on the surface).
+  - **Layer stack** — `z-0` Milky Way + CSS nebula gradients → `z-10` Mapbox (transparent fog/background during cosmic mode) → `z-40` glass UI (modal, stats, scroll driver).
+  - **Mouse interaction** — parallax camera tilt, galaxy rotation, lavender cursor glow; fades with scroll and `prefers-reduced-motion`.
+  - **Glass modal** — PULSE title, **ENTER THE GLOBE** CTA, privacy chips; stats bar + decorative side nav.
+  - **Enter flow** — geolocation starts **on button click** (user-gesture requirement); map phase switches immediately; single `getCurrentPosition` with `enableHighAccuracy: false` (reliable on desktop Mac).
+  - **Cosmic backdrop lifecycle** — visible during gate scroll, through globe intro (rotate + `flyTo`), and **returns when zooming out** below `zoom 5.5`; fades at street-level zoom. Mapbox `star-intensity: 0` (no built-in stars on the globe surface).
+  - **Scroll zoom-in** — Mapbox grows from a centre speck (`zoom -2` → `1.0`) as you scroll; slow spin only after the globe is fully formed.
 - **Cinematic globe intro** (`12e0eaf`):
-  - Mapbox **globe projection** + dark space fog (3D Earth on black background).
+  - Mapbox **globe projection** + dark space fog (3D Earth).
   - Starts at full zoom-out (`zoom 1`).
-  - **Horizontal axis rotation** — animates longitude 360° (not bearing, which tilted on a diagonal axis).
-  - One full rotation (~2.8s, ease-in/out), then `flyTo` user location at `zoom 10`.
-  - HUD and peer dots hidden until intro completes; online count moved to top-left.
+  - **Horizontal axis rotation** — animates longitude 360° (~2.8s), then `flyTo` user at `zoom 10`.
+  - HUD and peer dots hidden until intro completes; online count top-left.
 - **Map connection visuals** (`df3d52d`):
-  - **Status line** from Me → peer while connecting: orange dot-line + glow (pending), green gradient beam (connected), red dot-line flash (rejected).
-  - **Message orbs:** on send/receive, a glowing orb travels along the link — emerald (outgoing) vs violet (incoming).
-  - **Disconnect sequence:** line snaps red, recedes from both pins toward center with red embers, final burst at midpoint; chat panel slides out; WebRTC closes immediately.
-- **Refresh reconnect** *(pending commit)*:
-  - `sessionStorage` keeps session ID + pending peer across refresh; skip `leave()` while connected.
-  - New `reconnect` signal renegotiates WebRTC; other peer waits up to 30s instead of dropping immediately.
-  - `/api/join` preserves `busy` on re-join; globe intro skipped when restoring a session.
-- **Line/dot sync after refresh** *(pending commit)*:
-  - Privacy offset is **deterministic per session ID** — re-join no longer jumps the dot to a new random location.
-  - Peer markers call `setLngLat` every poll; connection line uses live `connectedPeerLocation` from poll (not stale cache).
+  - Status line Me → peer: orange marching dots (pending), green gradient (connected), red flash (rejected).
+  - **Message orbs** along the link — emerald (outgoing), violet (incoming).
+  - **Disconnect** — red line collapse, embers, center burst; chat slides out; WebRTC closes immediately.
+- **Refresh reconnect** (`e2bf58b`):
+  - `sessionStorage` session ID + pending peer; skip `leave()` while connected.
+  - `reconnect` signal renegotiates WebRTC; 30s grace window.
+  - `/api/join` preserves `busy`; globe intro skipped when restoring session.
+- **Line/dot sync after refresh** (`e2bf58b`):
+  - Deterministic privacy offset per session ID.
+  - Live `connectedPeerLocation` from poll; peer markers `setLngLat` every tick.
 
 **Decisions / trade-offs**
-- Longitude animation via `requestAnimationFrame` — Mapbox `easeTo` bearing cannot do a full 360° (0 === 360).
+
+- Longitude animation via `requestAnimationFrame` — Mapbox bearing cannot do a full 360°.
 - Intro runs once per session; map interaction locked until fly-in finishes.
-- `prefers-reduced-motion`: skip rotation, short fly only; disconnect/orb animations also respect this.
-- Mapbox markers use an outer wrapper — scale/opacity animate on inner elements so Mapbox `transform` positioning is not overwritten.
-- Message orb + disconnect coords are snapshotted at event time (not looked up live from peers) so animation stays stable if presence hiccups.
-- `line-trim-offset` values are clamped to `[0, 0.5]` — Mapbox rejects tiny negative floats from easing math.
-- Refresh reconnect: intentional End sets `blockReconnectSave` so `pagehide` calls `leave()` instead of saving reconnect intent; closing tab while connected relies on 15s stale timeout to clean up presence.
-- Deterministic privacy offset: same session ID + raw GPS → same dot; physical movement still updates position via new raw coords.
+- `prefers-reduced-motion`: skip galaxy scroll / parallax, short fly only.
+- Mapbox markers: outer wrapper — animate inner elements only (Mapbox owns outer `transform`).
+- Message orb + disconnect coords snapshotted at event time.
+- `line-trim-offset` clamped to `[0, 0.5]` — Mapbox rejects tiny negative floats.
+- Refresh reconnect: `blockReconnectSave` on intentional End; tab close while connected uses 15s stale timeout.
+- **Entry gate + map share one WorldMap instance** — map preloads under scroll overlay in `previewMode` (slow spin); handoff to live intro on enter.
+- **Geolocation on click, not after exit animation** — browsers require a user gesture; no IP/network fallback (kept simple after user feedback).
+- **Cosmic backdrop stays mounted in live phase** — opacity toggled (not unmounted) for smooth zoom in/out; `MilkyWayScene` progress `1` at globe view.
+- `GlassPanel` primitive for entry gate; reuse planned for chat polish.
+- Legacy entry files on disk (`AuroraBackground`, `HeroGlobe`, `PeerNodes`, etc.) — superseded by `MilkyWayScene`; safe to delete in cleanup.
 
 **Still to do**
-- Polish entry screen (aurora hero, privacy chips).
-- Glass UI, connection prompts, mobile bottom sheet for chat/video.
+
+- Glass UI for chat/video panels, connection prompts, mobile bottom sheet.
+- Delete unused legacy entry files (`HeroGlobe`, `AuroraBackground`, etc.) — superseded by `MilkyWayScene`.
 
 ---
 
@@ -87,6 +104,7 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 ## Change history (commits)
 
 ### `d098fe4` — Initialized
+
 **Phase:** setup  
 **Files:** entire assessment starter (39 files)
 
@@ -100,6 +118,7 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 ---
 
 ### `0a354aa` — Initial
+
 **Phase:** setup  
 **Files:** `package-lock.json`
 
@@ -108,6 +127,7 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 ---
 
 ### `05fdaad` — Fixed WebRTC "Connection failed (network)"
+
 **Phase:** 1  
 **Files:** `NOTES.md`, `app/api/join/route.ts`, `app/api/poll/route.ts`, `app/api/signal/route.ts`, `app/components/WorldMap.tsx`, `app/page.tsx`, `lib/webrtc.ts`
 
@@ -124,6 +144,7 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 ---
 
 ### `625baa3` — Update Vercel deployment link
+
 **Phase:** delivery  
 **Files:** `NOTES.md`
 
@@ -133,6 +154,7 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 ---
 
 ### `12e0eaf` — feat(ui): add cinematic globe intro on Enter Pulse
+
 **Phase:** 2  
 **Files:** `app/components/EntryGate.tsx`, `app/components/WorldMap.tsx`, `app/page.tsx`, `NOTES.md`
 
@@ -151,6 +173,7 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 ---
 
 ### `df3d52d` — feat(map): connection lines, message orbs, and disconnect animation
+
 **Phase:** 2  
 **Files:** `app/components/WorldMap.tsx`, `app/page.tsx`, `app/components/ChatPanel.tsx`, `app/globals.css`, `lib/types.ts`, `NOTES.md`
 
@@ -169,39 +192,48 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 
 ---
 
-### *(pending)* — fix: restore connection on refresh and sync line to peer dot
+### `e2bf58b` — fix: restore connection on refresh and keep line synced to peer dot
+
 **Phase:** 2  
 **Files:** `lib/session.ts`, `lib/geo.ts`, `lib/types.ts`, `app/api/join/route.ts`, `app/api/signal/route.ts`, `app/page.tsx`, `app/components/WorldMap.tsx`, `NOTES.md`
 
 - **`lib/session.ts`** — persist session ID + pending reconnect peer in `sessionStorage` (30s window).
-- **`app/page.tsx`**:
-  - Skip `leave()` on `pagehide` while connected; save reconnect intent instead.
-  - Auto-enter map + `attemptReconnect()` after refresh; other peer shows "Stranger reconnecting…" (30s grace).
-  - Pass `connectedPeerLocation` to map for live line coords.
-- **`app/api/signal/route.ts`** — new `reconnect` signal type (keeps both peers busy, triggers WebRTC renegotiation).
-- **`app/api/join/route.ts`** — preserve `busy` on re-join; pass session ID into privacy offset.
-- **`lib/geo.ts`** — deterministic offset per session ID (dot stays put on refresh).
-- **`app/components/WorldMap.tsx`** — update peer marker `setLngLat` every poll; line uses live peer location, not stale cache.
+- **`app/page.tsx`** — skip `leave()` on `pagehide` while connected; `attemptReconnect()` after refresh; live `connectedPeerLocation`.
+- **`app/api/signal/route.ts`** — `reconnect` signal type.
+- **`app/api/join/route.ts`** — preserve `busy` on re-join; session ID into privacy offset.
+- **`lib/geo.ts`** — deterministic offset per session ID.
+- **`app/components/WorldMap.tsx`** — peer marker `setLngLat` every poll; line uses live coords.
 
-**Suggested commit message:**
-```
-fix: restore connection on refresh and keep line synced to peer dot
+---
 
-- Persist session ID and reconnect intent across page refresh
-- Reconnect signal renegotiates WebRTC; peer waits 30s before dropping
-- Deterministic privacy offset per session; live coords for markers and line
-```
+### `161701d` — feat(ui): Milky Way scroll entry with cosmic backdrop behind globe
+
+**Phase:** 2  
+**Files:** `app/components/EntryGate.tsx`, `app/components/entry/MilkyWayScene.tsx`, `app/components/entry/GateStatsBar.tsx`, `app/components/entry/GateSideNav.tsx`, `app/components/entry/GlassPanel.tsx`, `app/components/WorldMap.tsx`, `app/page.tsx`, `app/globals.css`, `package.json`, `NOTES.md`
+
+- **`app/components/entry/MilkyWayScene.tsx`** — Three.js spiral galaxy; lavender/purple star palette; mouse parallax; separate `spaceAmbience` nebula layer; galaxy fades on scroll while coloured stars stay behind globe.
+- **`app/components/EntryGate.tsx`** — scroll driver (~380vh), glass enter panel, `onRequestLocation` on click, `onProgressChange` for map/cosmic sync.
+- **`app/page.tsx`** — layer stack (Milky Way `z-0`, map `z-10`, UI `z-40`); `cosmicActive` through intro + zoom-out (`inGlobeView` when `zoom < 5.5`); geolocation on user gesture.
+- **`app/components/WorldMap.tsx`** — `transparentSpace` + `applyMapAtmosphere()`; `previewMode` + scroll-driven zoom (`PREVIEW_ZOOM_MIN` → `GLOBE_ZOOM`); `onIntroComplete` / `onGlobeViewChange`; `star-intensity: 0`.
+- **`package.json`** — added `three` + `@types/three`.
+
+---
+
+### _(superseded)_ — feat(ui): redesign entry gate as Signal Void aurora landing
+
+Replaced by Milky Way Three.js scroll entry. Legacy files may still exist on disk but are no longer imported.
 
 ---
 
 ## Commits (quick reference)
 
-| Commit | Message | Phase |
-|--------|---------|-------|
-| `d098fe4` | Initialized | setup |
-| `0a354aa` | Initial | setup |
-| `05fdaad` | Fixed WebRTC "Connection failed (network)" | 1 |
-| `625baa3` | Update Vercel deployment link | delivery |
-| `12e0eaf` | feat(ui): add cinematic globe intro on Enter Pulse | 2 |
-| `df3d52d` | feat(map): connection lines, message orbs, and disconnect animation | 2 |
-| *(pending)* | fix: restore connection on refresh and keep line synced to peer dot | 2 |
+| Commit      | Message                                                             | Phase    |
+| ----------- | ------------------------------------------------------------------- | -------- |
+| `d098fe4`   | Initialized                                                         | setup    |
+| `0a354aa`   | Initial                                                             | setup    |
+| `05fdaad`   | Fixed WebRTC "Connection failed (network)"                          | 1        |
+| `625baa3`   | Update Vercel deployment link                                       | delivery |
+| `12e0eaf`   | feat(ui): add cinematic globe intro on Enter Pulse                  | 2        |
+| `df3d52d`   | feat(map): connection lines, message orbs, and disconnect animation | 2        |
+| `e2bf58b`   | fix: restore connection on refresh and keep line synced to peer dot | 2        |
+| `161701d`   | feat(ui): Milky Way scroll entry with stars behind the globe        | 2        |

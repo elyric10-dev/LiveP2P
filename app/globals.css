@@ -1,28 +1,31 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #050510;
+  --foreground: #ededed;
+  --pulse-void: #050510;
+  --pulse-emerald: #00ffcc;
+  --pulse-cyan: #00d2ff;
+  --pulse-violet: #8a2be2;
+  --pulse-glass: rgba(12, 12, 24, 0.65);
+  --pulse-glass-border: rgba(255, 255, 255, 0.1);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-pulse-void: var(--pulse-void);
+  --color-pulse-emerald: var(--pulse-emerald);
+  --color-pulse-cyan: var(--pulse-cyan);
+  --color-pulse-violet: var(--pulse-violet);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
 /* Live user dots on the map */
@@ -153,5 +156,509 @@ body {
   100% {
     opacity: 0;
     transform: translateX(100%);
+  }
+}
+
+/* ── Entry gate (reference UI) ── */
+
+@keyframes globe-spin {
+  from {
+    transform: rotateY(0deg);
+  }
+  to {
+    transform: rotateY(360deg);
+  }
+}
+
+@keyframes orbit-spin {
+  from {
+    transform: rotateX(72deg) rotateZ(0deg);
+  }
+  to {
+    transform: rotateX(72deg) rotateZ(360deg);
+  }
+}
+
+@keyframes nebula-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes peer-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes peer-line-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    opacity: 0.75;
+    stroke-dashoffset: 8;
+  }
+}
+
+@keyframes scroll-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(4px);
+  }
+}
+
+@keyframes aurora-drift {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(3%, -2%) scale(1.05);
+  }
+  66% {
+    transform: translate(-2%, 2%) scale(0.98);
+  }
+}
+
+@keyframes shine-sweep {
+  0% {
+    background-position: 200% center;
+  }
+  100% {
+    background-position: -200% center;
+  }
+}
+
+@keyframes gate-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes gate-exit-panel {
+  to {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+
+@keyframes gate-exit-flash {
+  0% {
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes gate-exit-fade {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes arc-pulse {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.gate-cosmic-bg {
+  z-index: 0;
+}
+
+.gate-nebula {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  animation: nebula-breathe 10s ease-in-out infinite;
+}
+
+.gate-nebula--teal {
+  left: -5%;
+  top: 10%;
+  width: 45%;
+  height: 45%;
+  background: radial-gradient(circle, rgba(0, 255, 204, 0.35), transparent 70%);
+}
+
+.gate-nebula--purple {
+  right: -5%;
+  bottom: 15%;
+  width: 50%;
+  height: 50%;
+  background: radial-gradient(circle, rgba(138, 43, 226, 0.35), transparent 70%);
+  animation-delay: -5s;
+}
+
+/* Hero globe */
+.gate-hero-globe {
+  perspective: 900px;
+}
+
+.gate-globe-rotate {
+  transform-style: preserve-3d;
+}
+
+.gate-globe-rotate--spin {
+  animation: globe-spin 48s linear infinite;
+}
+
+.gate-globe-sphere {
+  position: relative;
+}
+
+.gate-globe-glow {
+  position: absolute;
+  inset: -8%;
+  border-radius: 50%;
+  filter: blur(40px);
+  pointer-events: none;
+}
+
+.gate-globe-glow--teal {
+  left: -15%;
+  background: radial-gradient(circle, rgba(0, 255, 204, 0.45), transparent 65%);
+}
+
+.gate-globe-glow--purple {
+  right: -15%;
+  background: radial-gradient(circle, rgba(138, 43, 226, 0.4), transparent 65%);
+}
+
+.gate-orbit-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border: 1px solid rgba(0, 255, 204, 0.25);
+  border-radius: 50%;
+  transform-style: preserve-3d;
+  pointer-events: none;
+}
+
+.gate-orbit-ring--outer {
+  width: 115%;
+  height: 28%;
+  margin-left: -57.5%;
+  margin-top: -14%;
+  animation: orbit-spin 20s linear infinite;
+  box-shadow: 0 0 20px rgba(0, 255, 204, 0.15);
+}
+
+.gate-orbit-ring--inner {
+  width: 95%;
+  height: 22%;
+  margin-left: -47.5%;
+  margin-top: -11%;
+  animation: orbit-spin 14s linear infinite reverse;
+  border-color: rgba(138, 43, 226, 0.3);
+}
+
+.gate-platform {
+  position: absolute;
+  left: 50%;
+  bottom: -12%;
+  width: 70%;
+  height: 24px;
+  margin-left: -35%;
+  border-radius: 50%;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 255, 204, 0.15) 0%,
+    rgba(75, 0, 130, 0.25) 50%,
+    transparent 100%
+  );
+  box-shadow:
+    0 0 40px rgba(0, 255, 204, 0.2),
+    0 0 60px rgba(138, 43, 226, 0.15),
+    inset 0 2px 8px rgba(0, 255, 204, 0.3);
+}
+
+/* Peer nodes */
+.gate-peer-card {
+  animation: peer-float 5s ease-in-out infinite;
+}
+
+.gate-peer-card:nth-child(2) {
+  animation-delay: -1.2s;
+}
+.gate-peer-card:nth-child(3) {
+  animation-delay: -2.5s;
+}
+.gate-peer-card:nth-child(4) {
+  animation-delay: -3.8s;
+}
+
+.gate-peer-line {
+  stroke-dasharray: 4 4;
+  animation: peer-line-pulse 3s ease-in-out infinite;
+}
+
+.gate-peer-avatar--teal {
+  background: linear-gradient(135deg, #00ffcc, #00d2ff);
+  box-shadow: 0 0 16px rgba(0, 255, 204, 0.5);
+}
+
+.gate-peer-avatar--purple {
+  background: linear-gradient(135deg, #8a2be2, #4b0082);
+  box-shadow: 0 0 16px rgba(138, 43, 226, 0.5);
+}
+
+.gate-peer-label {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(12px);
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.gate-peer-label--teal {
+  box-shadow: 0 0 12px rgba(0, 255, 204, 0.1);
+}
+
+.gate-peer-label--purple {
+  box-shadow: 0 0 12px rgba(138, 43, 226, 0.1);
+}
+
+/* Side nav */
+.gate-side-nav {
+  background: rgba(0, 0, 0, 0.45);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.gate-side-nav-btn {
+  color: #a0a0a0;
+}
+
+.gate-side-nav-btn--active {
+  color: #00ffcc;
+  background: rgba(0, 255, 204, 0.12);
+  box-shadow: 0 0 20px rgba(0, 255, 204, 0.25);
+}
+
+/* Stats bar */
+.gate-stat-icon {
+  display: flex;
+  height: 36px;
+  width: 36px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.gate-stat-icon--teal {
+  color: #00ffcc;
+  background: rgba(0, 255, 204, 0.12);
+  box-shadow: 0 0 16px rgba(0, 255, 204, 0.2);
+}
+
+.gate-stat-icon--purple {
+  color: #8a2be2;
+  background: rgba(138, 43, 226, 0.12);
+  box-shadow: 0 0 16px rgba(138, 43, 226, 0.2);
+}
+
+.gate-stat-icon--blue {
+  color: #00d2ff;
+  background: rgba(0, 210, 255, 0.12);
+  box-shadow: 0 0 16px rgba(0, 210, 255, 0.2);
+}
+
+/* CTA + privacy */
+.gate-enter-btn {
+  background: linear-gradient(90deg, #00ffcc 0%, #00d2ff 100%);
+  box-shadow:
+    0 0 24px rgba(0, 255, 204, 0.35),
+    0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.gate-privacy-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.4);
+  padding: 0.375rem 0.75rem;
+  font-size: 0.7rem;
+  color: #a0a0a0;
+  backdrop-filter: blur(8px);
+}
+
+.gate-scroll-driver {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.gate-scroll-driver::-webkit-scrollbar {
+  display: none;
+}
+
+.milky-cursor-glow {
+  width: 220px;
+  height: 220px;
+  margin-left: -110px;
+  margin-top: -110px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(216, 191, 216, 0.35) 0%,
+    rgba(106, 13, 173, 0.2) 35%,
+    transparent 70%
+  );
+  filter: blur(8px);
+  will-change: transform, opacity;
+}
+
+.gate-root--cosmic .gate-scroll-driver {
+  scroll-behavior: smooth;
+}
+
+.gate-scroll-chevron {
+  animation: scroll-bounce 2s ease-in-out infinite;
+}
+
+.gate-enter-item {
+  animation: gate-enter 0.7s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+.gate-enter-item--1 {
+  animation-delay: 0.05s;
+}
+.gate-enter-item--2 {
+  animation-delay: 0.15s;
+}
+.gate-enter-item--3 {
+  animation-delay: 0.25s;
+}
+.gate-enter-item--4 {
+  animation-delay: 0.35s;
+}
+
+.gate-shine-text {
+  background: linear-gradient(
+    105deg,
+    #fff 0%,
+    #fff 40%,
+    var(--pulse-cyan) 50%,
+    #fff 60%,
+    #fff 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shine-sweep 6s linear infinite;
+}
+
+.gate-cta {
+  animation: pulse-ring 2.5s ease-out infinite;
+}
+
+.gate-signal-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.5);
+  animation: pulse-ring 2.5s ease-out infinite;
+  pointer-events: none;
+}
+
+.gate-arc {
+  animation: arc-pulse 4s ease-in-out infinite;
+}
+
+.gate-root--exiting .gate-hero-globe,
+.gate-root--exiting .gate-cosmic-bg,
+.gate-root--exiting .gate-peer-card,
+.gate-root--exiting .gate-side-nav,
+.gate-root--exiting .gate-stats-bar {
+  animation: gate-exit-fade 0.6s ease forwards;
+}
+
+.gate-root--exiting .gate-cosmic-bg {
+  animation: gate-exit-fade 0.6s ease forwards;
+  transform: scale(1.15);
+  opacity: 0;
+  transition:
+    transform 0.7s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.7s ease;
+}
+
+.gate-root--exiting .gate-panel {
+  animation: gate-exit-panel 0.55s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.gate-root--exiting .gate-flash {
+  animation: gate-exit-flash 0.55s ease-out forwards;
+}
+
+.gate-root--exiting .gate-fade-overlay {
+  animation: gate-exit-fade 0.7s ease 0.15s forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gate-shine-text {
+    animation: none;
+    color: #fff;
+    background: none;
+    -webkit-background-clip: unset;
+    background-clip: unset;
+  }
+
+  .gate-enter-item,
+  .gate-cta,
+  .gate-signal-dot,
+  .gate-arc,
+  .gate-globe-rotate--spin,
+  .gate-orbit-ring,
+  .gate-nebula,
+  .gate-peer-card,
+  .gate-peer-line,
+  .gate-scroll-chevron {
+    animation: none;
+  }
+
+  .milky-cursor-glow {
+    display: none;
+  }
+
+  .gate-root--exiting .gate-cosmic-bg,
+  .gate-root--exiting .gate-panel,
+  .gate-root--exiting .gate-flash,
+  .gate-root--exiting .gate-fade-overlay,
+  .gate-root--exiting .gate-hero-globe,
+  .gate-root--exiting .gate-cosmic-bg,
+  .gate-root--exiting .gate-stats-bar {
+    animation: none;
+    opacity: 0;
+    transition: none;
   }
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import EntryGate from "./components/EntryGate";
+import MilkyWayScene from "./components/entry/MilkyWayScene";
 import WorldMap from "./components/WorldMap";
 import ConnectionPrompt from "./components/ConnectionPrompt";
 import ChatPanel, { type ChatMessage } from "./components/ChatPanel";
@@ -46,6 +47,9 @@ function connectionLineFromConn(conn: Conn): ConnectionLine | null {
 
 export default function Home() {
   const [phase, setPhase] = useState<"gate" | "live">("gate");
+  const [gateProgress, setGateProgress] = useState(0);
+  const [mapIntroDone, setMapIntroDone] = useState(false);
+  const [inGlobeView, setInGlobeView] = useState(false);
   const [sessionId, setSessionId] = useState("");
   const [skipIntro, setSkipIntro] = useState(false);
   const [peers, setPeers] = useState<PeerDot[]>([]);
@@ -523,29 +527,40 @@ export default function Home() {
     return () => window.removeEventListener("pagehide", onPageHide);
   }, [sessionId, phase]);
 
-  function enterLiveMap() {
+  const geoActiveRef = useRef(false);
+
+  function requestLocation() {
+    if (geoActiveRef.current || myLocationRef.current) return;
+    if (!("geolocation" in navigator)) return;
+
+    geoActiveRef.current = true;
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
+        geoActiveRef.current = false;
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         setMyLocation({ lat, lng });
         await join(sessionId, lat, lng);
       },
       (err) => {
-        showNotice(
+        geoActiveRef.current = false;
+        const msg =
           err.code === err.PERMISSION_DENIED
-            ? "Location permission is required to place you on the map."
-            : "Couldn't get your location. Please try again.",
-        );
+            ? "Location permission is required. Allow location for this site in your browser settings."
+            : err.code === err.TIMEOUT
+              ? "Location timed out. Try again."
+              : "Couldn't get your location. On Mac, enable Location Services for your browser.";
+        showNotice(msg);
       },
-      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
+      // Low accuracy works reliably on desktop Mac; high accuracy often fails with CoreLocation.
+      { enableHighAccuracy: false, timeout: 20_000, maximumAge: 300_000 },
     );
   }
 
   // Restore map + reconnect after refresh (skips entry gate).
   useEffect(() => {
     if (phase !== "live" || !sessionId || myLocation) return;
-    enterLiveMap();
+    requestLocation();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once when live without location
   }, [phase, sessionId]);
 
@@ -560,30 +575,38 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reconnect once after refresh
   }, [phase, sessionId, myLocation]);
 
-  async function handleEnter() {
+  function handleEnter() {
+    setGateProgress(1);
+    setMapIntroDone(false);
     setPhase("live");
-    enterLiveMap();
-  }
-
-  if (phase === "gate") {
-    return <EntryGate onEnter={handleEnter} />;
   }
 
   if (!sessionId) {
     return null;
   }
 
+  const inGate = phase === "gate";
+  const cosmicActive =
+    inGate || (phase === "live" && (!mapIntroDone || inGlobeView));
+  const milkyProgress = inGate ? gateProgress : 1;
+  const mapZoomProgress = inGate
+    ? Math.min(1, Math.max(0, (gateProgress - 0.28) / 0.55))
+    : 1;
+  const mapReveal =
+    mapZoomProgress > 0.02 ? Math.min(1, mapZoomProgress * 1.05) : 0;
   const inChat =
-    conn.kind === "connecting" ||
-    conn.kind === "connected" ||
-    disconnecting;
+    !inGate &&
+    (conn.kind === "connecting" ||
+      conn.kind === "connected" ||
+      disconnecting);
   const connectionLine =
-    disconnectAnim || disconnecting
+    inGate || disconnectAnim || disconnecting
       ? null
       : lineFlash ?? connectionLineFromConn(conn);
 
   const connectedPeerLocation =
-    conn.kind === "connecting" || conn.kind === "connected"
+    !inGate &&
+    (conn.kind === "connecting" || conn.kind === "connected")
       ? (peers.find((p) => p.id === conn.peerId) ??
         connectedPeerCoordsRef.current ??
         null)
@@ -591,27 +614,73 @@ export default function Home() {
 
   return (
     <main className="fixed inset-0 overflow-hidden">
-      <WorldMap
-        peers={peers}
-        me={myLocation}
-        skipIntro={skipIntro}
-        connectionLine={connectionLine}
-        connectedPeerLocation={connectedPeerLocation}
-        disconnectAnim={disconnectAnim}
-        onDisconnectComplete={completeDisconnect}
-        messageOrbs={messageOrbs}
-        onMessageOrbComplete={completeMessageOrb}
-        onPeerClick={requestConnection}
-        canConnect={conn.kind === "idle" && !disconnecting}
-      />
+      {(inGate || phase === "live") && (
+        <div
+          className="pointer-events-none fixed inset-0 z-0 bg-[#0a0a23] transition-opacity duration-700"
+          style={{ opacity: cosmicActive ? 1 : 0 }}
+        >
+          <MilkyWayScene progress={milkyProgress} />
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              opacity: cosmicActive ? 1 : 0,
+              transition: "opacity 0.7s ease",
+              background: [
+                `radial-gradient(ellipse 55% 40% at 50% 42%, rgba(216, 191, 216, ${0.14 + (1 - milkyProgress) * 0.1}) 0%, transparent 58%)`,
+                `radial-gradient(ellipse 90% 70% at 50% 45%, rgba(106, 13, 173, ${0.22 + (1 - milkyProgress) * 0.08}) 0%, transparent 65%)`,
+              ].join(", "),
+            }}
+            aria-hidden
+          />
+        </div>
+      )}
 
-      {notice && (
+      <div
+        className={`fixed inset-0 ${cosmicActive ? "z-10" : "z-0"}`}
+        style={
+          inGate
+            ? { opacity: mapReveal, transition: "opacity 0.2s ease-out" }
+            : undefined
+        }
+      >
+        <WorldMap
+          peers={inGate ? [] : peers}
+          me={inGate ? null : myLocation}
+          previewMode={inGate}
+          previewScrollProgress={mapZoomProgress}
+          transparentSpace={cosmicActive}
+          skipIntro={skipIntro}
+          onIntroComplete={() => {
+            setMapIntroDone(true);
+            setInGlobeView(false);
+          }}
+          onGlobeViewChange={setInGlobeView}
+          connectionLine={connectionLine}
+          connectedPeerLocation={connectedPeerLocation}
+          disconnectAnim={inGate ? null : disconnectAnim}
+          onDisconnectComplete={inGate ? () => {} : completeDisconnect}
+          messageOrbs={inGate ? [] : messageOrbs}
+          onMessageOrbComplete={inGate ? () => {} : completeMessageOrb}
+          onPeerClick={inGate ? () => {} : requestConnection}
+          canConnect={!inGate && conn.kind === "idle" && !disconnecting}
+        />
+      </div>
+
+      {inGate && (
+        <EntryGate
+          onEnter={handleEnter}
+          onRequestLocation={requestLocation}
+          onProgressChange={setGateProgress}
+        />
+      )}
+
+      {!inGate && notice && (
         <div className="absolute left-1/2 top-20 z-30 -translate-x-1/2 rounded-full bg-zinc-800/90 px-4 py-2 text-sm text-zinc-100 shadow-lg backdrop-blur">
           {notice}
         </div>
       )}
 
-      {conn.kind === "requesting" && (
+      {!inGate && conn.kind === "requesting" && (
         <div className="absolute left-1/2 top-20 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-zinc-800/90 px-4 py-2 text-sm text-zinc-100 shadow-lg backdrop-blur">
           <span>Requesting connection…</span>
           <button
@@ -623,7 +692,7 @@ export default function Home() {
         </div>
       )}
 
-      {conn.kind === "incoming" && (
+      {!inGate && conn.kind === "incoming" && (
         <ConnectionPrompt
           title="A stranger wants to connect"
           acceptLabel="Accept"
@@ -652,13 +721,13 @@ export default function Home() {
         />
       )}
 
-      {video === "requesting" && (
+      {!inGate && video === "requesting" && (
         <div className="absolute bottom-24 left-1/2 z-30 -translate-x-1/2 rounded-full bg-zinc-800/90 px-4 py-2 text-sm text-zinc-100 shadow-lg backdrop-blur">
           Waiting for stranger to accept video…
         </div>
       )}
 
-      {video === "incoming" && (
+      {!inGate && video === "incoming" && (
         <ConnectionPrompt
           title="Start video call?"
           subtitle="The stranger wants to turn on video."
@@ -669,7 +738,7 @@ export default function Home() {
         />
       )}
 
-      {video === "active" && (
+      {!inGate && video === "active" && (
         <VideoPanel
           localStream={localStream}
           remoteStream={remoteStream}

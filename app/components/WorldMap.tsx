@@ -11,7 +11,12 @@ const TOKEN =
 
 const GLOBE_CENTER: [number, number] = [0, 20];
 const GLOBE_ZOOM = 1.0;
+/** Tiny speck at the start of the scroll zoom-in. */
+const PREVIEW_ZOOM_MIN = -2;
+const PREVIEW_ROTATE_AT = 0.88;
 const USER_ZOOM = 10;
+/** Below this zoom the map shows the globe — keep cosmic backdrop visible. */
+const GLOBE_VIEW_MAX_ZOOM = 5.5;
 const ROTATE_DURATION_MS = 2800;
 const FLY_DURATION_MS = 2500;
 const ORB_TRAVEL_MS = 1600;
@@ -535,6 +540,11 @@ function prefersReducedMotion(): boolean {
   );
 }
 
+function zoomFromScrollProgress(t: number): number {
+  const p = easeInOutCubic(Math.min(1, Math.max(0, t)));
+  return PREVIEW_ZOOM_MIN + (GLOBE_ZOOM - PREVIEW_ZOOM_MIN) * p;
+}
+
 function lockMapInteraction(map: MapboxMap) {
   map.dragPan.disable();
   map.dragRotate.disable();
@@ -580,9 +590,66 @@ function rotateGlobe(
   return () => cancelAnimationFrame(frameId);
 }
 
+/** Slow continuous spin once the globe has grown in during gate scroll. */
+function startPreviewRotation(
+  map: MapboxMap,
+  getZoom: () => number,
+): () => void {
+  const lat = map.getCenter().lat;
+  let lng = map.getCenter().lng;
+  const degPerSec = 3.2;
+  let last = performance.now();
+  let frameId = 0;
+
+  const tick = (now: number) => {
+    const dt = (now - last) / 1000;
+    last = now;
+    lng += degPerSec * dt;
+    map.jumpTo({
+      center: [lng, lat],
+      zoom: getZoom(),
+      pitch: 0,
+      bearing: 0,
+    });
+    frameId = requestAnimationFrame(tick);
+  };
+
+  frameId = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(frameId);
+}
+
+function applyMapAtmosphere(map: MapboxMap, transparentSpace: boolean) {
+  if (transparentSpace) {
+    map.setFog({
+      color: "rgba(5, 5, 8, 0)",
+      "high-color": "rgba(12, 12, 20, 0)",
+      "horizon-blend": 0.05,
+      "space-color": "rgba(0, 0, 0, 0)",
+      "star-intensity": 0,
+    });
+    if (map.getLayer("background")) {
+      map.setPaintProperty("background", "background-color", "rgba(0, 0, 0, 0)");
+    }
+  } else {
+    map.setFog({
+      color: "rgb(5, 5, 8)",
+      "high-color": "rgb(12, 12, 20)",
+      "horizon-blend": 0.08,
+      "space-color": "rgb(0, 0, 0)",
+      "star-intensity": 0,
+    });
+    if (map.getLayer("background")) {
+      map.setPaintProperty("background", "background-color", "rgb(0, 0, 0)");
+    }
+  }
+}
+
 export default function WorldMap({
   peers,
   me,
+  previewMode = false,
+  previewScrollProgress = 0,
+  transparentSpace = false,
   skipIntro = false,
   connectionLine,
   connectedPeerLocation,
@@ -592,9 +659,14 @@ export default function WorldMap({
   onMessageOrbComplete,
   onPeerClick,
   canConnect,
+  onIntroComplete,
+  onGlobeViewChange,
 }: {
   peers: PeerDot[];
   me: { lat: number; lng: number } | null;
+  previewMode?: boolean;
+  previewScrollProgress?: number;
+  transparentSpace?: boolean;
   skipIntro?: boolean;
   connectionLine: ConnectionLine | null;
   connectedPeerLocation: { lat: number; lng: number } | null;
@@ -604,6 +676,8 @@ export default function WorldMap({
   onMessageOrbComplete: (id: string) => void;
   onPeerClick: (id: string) => void;
   canConnect: boolean;
+  onIntroComplete?: () => void;
+  onGlobeViewChange?: (isGlobeView: boolean) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapboxMap | null>(null);
@@ -614,11 +688,14 @@ export default function WorldMap({
   const rotateCompleteRef = useRef(false);
   const meCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   const cancelRotateRef = useRef<(() => void) | null>(null);
+  const previewRotateCancelRef = useRef<(() => void) | null>(null);
   const lineAnimStopRef = useRef<(() => void) | null>(null);
   const disconnectStopRef = useRef<(() => void) | null>(null);
   const orbAnimStopsRef = useRef<Map<string, () => void>>(new Map());
   const onOrbCompleteRef = useRef(onMessageOrbComplete);
   const onDisconnectCompleteRef = useRef(onDisconnectComplete);
+  const onIntroCompleteRef = useRef(onIntroComplete);
+  const onGlobeViewChangeRef = useRef(onGlobeViewChange);
   const [ready, setReady] = useState(false);
   const [introComplete, setIntroComplete] = useState(false);
 
@@ -629,10 +706,22 @@ export default function WorldMap({
     canConnectRef.current = canConnect;
     onOrbCompleteRef.current = onMessageOrbComplete;
     onDisconnectCompleteRef.current = onDisconnectComplete;
+    onIntroCompleteRef.current = onIntroComplete;
+    onGlobeViewChangeRef.current = onGlobeViewChange;
   });
 
   const skipIntroRef = useRef(skipIntro);
   skipIntroRef.current = skipIntro;
+  const previewModeRef = useRef(previewMode);
+  previewModeRef.current = previewMode;
+  const previewScrollRef = useRef(previewScrollProgress);
+  previewScrollRef.current = previewScrollProgress;
+  const transparentSpaceRef = useRef(transparentSpace);
+  transparentSpaceRef.current = transparentSpace;
+
+  function syncGlobeView(map: MapboxMap) {
+    onGlobeViewChangeRef.current?.(map.getZoom() < GLOBE_VIEW_MAX_ZOOM);
+  }
 
   function finishIntro(map: MapboxMap) {
     if (introDoneRef.current) return;
@@ -641,6 +730,7 @@ export default function WorldMap({
     rotateCompleteRef.current = true;
     setIntroComplete(true);
     unlockMapInteraction(map);
+    onIntroCompleteRef.current?.();
   }
 
   function skipIntroJump(map: MapboxMap) {
@@ -683,6 +773,7 @@ export default function WorldMap({
     if (!TOKEN || !containerRef.current) return;
     let cancelled = false;
     const markers = markersRef.current;
+    let onZoom: (() => void) | null = null;
 
     (async () => {
       const mapboxgl = (await import("mapbox-gl")).default;
@@ -692,7 +783,7 @@ export default function WorldMap({
         container: containerRef.current,
         style: "mapbox://styles/mapbox/dark-v11",
         center: GLOBE_CENTER,
-        zoom: GLOBE_ZOOM,
+        zoom: previewModeRef.current ? PREVIEW_ZOOM_MIN : GLOBE_ZOOM,
         pitch: 0,
         bearing: 0,
         attributionControl: true,
@@ -701,15 +792,18 @@ export default function WorldMap({
       map.on("load", () => {
         if (cancelled) return;
         map.setProjection("globe");
-        map.setFog({
-          color: "rgb(5, 5, 8)",
-          "high-color": "rgb(12, 12, 20)",
-          "horizon-blend": 0.08,
-          "space-color": "rgb(0, 0, 0)",
-          "star-intensity": 0.15,
-        });
+        applyMapAtmosphere(map, transparentSpaceRef.current);
         setReady(true);
         lockMapInteraction(map);
+
+        onZoom = () => syncGlobeView(map);
+        map.on("zoom", onZoom);
+        map.on("zoomend", onZoom);
+        syncGlobeView(map);
+
+        if (previewModeRef.current) {
+          return;
+        }
 
         if (skipIntroRef.current) {
           rotateCompleteRef.current = true;
@@ -734,8 +828,15 @@ export default function WorldMap({
 
     return () => {
       cancelled = true;
+      const map = mapRef.current;
+      if (map && onZoom) {
+        map.off("zoom", onZoom);
+        map.off("zoomend", onZoom);
+      }
       cancelRotateRef.current?.();
       cancelRotateRef.current = null;
+      previewRotateCancelRef.current?.();
+      previewRotateCancelRef.current = null;
       lineAnimStopRef.current?.();
       lineAnimStopRef.current = null;
       disconnectStopRef.current?.();
@@ -756,10 +857,81 @@ export default function WorldMap({
     };
   }, []);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    applyMapAtmosphere(map, transparentSpace);
+  }, [transparentSpace, ready]);
+
+  // Gate scroll: grow the globe from a centre speck; spin only once it is fully formed.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !previewMode) {
+      previewRotateCancelRef.current?.();
+      previewRotateCancelRef.current = null;
+      return;
+    }
+
+    const t = previewScrollProgress;
+    const zoom = zoomFromScrollProgress(t);
+
+    if (t < PREVIEW_ROTATE_AT) {
+      previewRotateCancelRef.current?.();
+      previewRotateCancelRef.current = null;
+      map.jumpTo({
+        center: GLOBE_CENTER,
+        zoom,
+        pitch: 0,
+        bearing: 0,
+      });
+      return;
+    }
+
+    if (!previewRotateCancelRef.current) {
+      map.jumpTo({
+        center: GLOBE_CENTER,
+        zoom,
+        pitch: 0,
+        bearing: 0,
+      });
+      previewRotateCancelRef.current = startPreviewRotation(map, () =>
+        zoomFromScrollProgress(previewScrollRef.current),
+      );
+    }
+  }, [previewScrollProgress, previewMode, ready]);
+
+  // Gate preview → live handoff: stop slow spin and run the globe intro.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || previewMode || introDoneRef.current) return;
+
+    previewRotateCancelRef.current?.();
+    previewRotateCancelRef.current = null;
+
+    if (skipIntroRef.current) {
+      rotateCompleteRef.current = true;
+      if (meCoordsRef.current) skipIntroJump(map);
+      return;
+    }
+
+    if (prefersReducedMotion()) {
+      rotateCompleteRef.current = true;
+      tryFlyToUser(map);
+      return;
+    }
+
+    flyStartedRef.current = false;
+    rotateCompleteRef.current = false;
+    cancelRotateRef.current = rotateGlobe(map, ROTATE_DURATION_MS, () => {
+      rotateCompleteRef.current = true;
+      tryFlyToUser(map);
+    });
+  }, [previewMode, ready]);
+
   // Store location and fly only after the full globe rotation finishes.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || !me) return;
+    if (!map || !ready || !me || previewMode) return;
     meCoordsRef.current = me;
     tryFlyToUser(map);
   }, [me, ready]);
@@ -767,7 +939,7 @@ export default function WorldMap({
   // User pin — visible during rotation once location is known.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || !me) return;
+    if (!map || !ready || !me || previewMode) return;
     let cancelled = false;
 
     (async () => {
@@ -792,12 +964,12 @@ export default function WorldMap({
     return () => {
       cancelled = true;
     };
-  }, [me, ready]);
+  }, [me, ready, previewMode]);
 
   // Peer dots — only after intro completes.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || !introComplete) return;
+    if (!map || !ready || !introComplete || previewMode) return;
     let cancelled = false;
 
     (async () => {
@@ -950,8 +1122,13 @@ export default function WorldMap({
   }, [messageOrbs, ready, introComplete]);
 
   return (
-    <div className="absolute inset-0 bg-black">
-      <div ref={containerRef} className="h-full w-full bg-black" />
+    <div
+      className={`absolute inset-0 ${transparentSpace ? "bg-transparent" : "bg-black"}`}
+    >
+      <div
+        ref={containerRef}
+        className={`h-full w-full ${transparentSpace ? "bg-transparent" : "bg-black"}`}
+      />
 
       {!TOKEN && (
         <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
