@@ -206,7 +206,7 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 
 ---
 
-### `161701d` — feat(ui): Milky Way scroll entry with cosmic backdrop behind globe
+### `2a1b392` — feat(ui): Milky Way scroll entry with cosmic backdrop behind globe
 
 **Phase:** 2  
 **Files:** `app/components/EntryGate.tsx`, `app/components/entry/MilkyWayScene.tsx`, `app/components/entry/GateStatsBar.tsx`, `app/components/entry/GateSideNav.tsx`, `app/components/entry/GlassPanel.tsx`, `app/components/WorldMap.tsx`, `app/page.tsx`, `app/globals.css`, `package.json`, `NOTES.md`
@@ -236,4 +236,4 @@ Replaced by Milky Way Three.js scroll entry. Legacy files may still exist on dis
 | `12e0eaf`   | feat(ui): add cinematic globe intro on Enter Pulse                  | 2        |
 | `df3d52d`   | feat(map): connection lines, message orbs, and disconnect animation | 2        |
 | `e2bf58b`   | fix: restore connection on refresh and keep line synced to peer dot | 2        |
-| `161701d`   | feat(ui): Milky Way scroll entry with stars behind the globe        | 2        |
+| `2a1b392`   | feat(ui): Milky Way scroll entry with stars behind the globe        | 2        |
