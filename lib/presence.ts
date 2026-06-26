@@ -8,3 +8,6 @@ export const SIGNAL_TTL_MS = 60_000;
 
 // Client poll interval. Kept here so client + server reason about the same cadence.
 export const POLL_INTERVAL_MS = 1_500;
+
+/** Faster polling while a WebRTC reconnect handshake is in flight. */
+export const RECONNECT_POLL_INTERVAL_MS = 350;

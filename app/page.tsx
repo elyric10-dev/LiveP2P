@@ -11,7 +11,7 @@ import ChatPanel, { type ChatMessage } from "./components/ChatPanel";
 import VideoPanel from "./components/VideoPanel";
 import { join, leave, poll, sendSignal } from "@/lib/api";
 import { PeerSession, type DescType, type PeerControl } from "@/lib/webrtc";
-import { POLL_INTERVAL_MS } from "@/lib/presence";
+import { POLL_INTERVAL_MS, RECONNECT_POLL_INTERVAL_MS } from "@/lib/presence";
 import {
   clearPendingReconnect,
   consumePendingReconnect,
@@ -97,6 +97,8 @@ export default function Home() {
   const requestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectWaitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttempted = useRef(false);
+  const bothReconnectingRef = useRef(false);
+  const signalEpochRef = useRef(0);
   const hadVideoBeforeRefreshRef = useRef(false);
   const restoringVideoRef = useRef(false);
   const videoReconnectSelfRef = useRef(false);
@@ -185,6 +187,29 @@ export default function Home() {
     hadVideoBeforeRefreshRef.current = false;
     restoringVideoRef.current = false;
     videoReconnectSelfRef.current = false;
+    bothReconnectingRef.current = false;
+  }
+
+  function markSignalEpoch() {
+    signalEpochRef.current = Date.now();
+  }
+
+  function isStaleWebRtcSignal(sig: SignalMsg): boolean {
+    if (!signalEpochRef.current) return false;
+    return new Date(sig.createdAt).getTime() < signalEpochRef.current;
+  }
+
+  /** Refreshed user starts WebRTC; when both refreshed, lower session id wins. */
+  function shouldBeReconnectInitiator(peerId: string): boolean {
+    if (!reconnectAttempted.current) return false;
+    if (!bothReconnectingRef.current) return true;
+    return sessionId < peerId;
+  }
+
+  /** Staying user, or higher session id when both refreshed, recreates polite peer. */
+  function shouldRespondToReconnect(peerId: string): boolean {
+    if (!reconnectAttempted.current) return true;
+    return sessionId > peerId;
   }
 
   function maybeRestoreVideoAfterReconnect() {
@@ -201,6 +226,7 @@ export default function Home() {
     if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
     clearPendingReconnect();
     clearVideoRestore();
+    signalEpochRef.current = 0;
     peerRef.current?.close();
     peerRef.current = null;
     setLocalStream(null);
@@ -303,6 +329,7 @@ export default function Home() {
           peerRef.current?.close();
           peerRef.current = null;
           setConn({ kind: "connecting", peerId: c.peerId });
+          markSignalEpoch();
           showNotice("Stranger reconnecting…");
           if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
           reconnectWaitTimer.current = setTimeout(() => {
@@ -331,13 +358,15 @@ export default function Home() {
   }
 
   function attemptReconnect(peerId: string) {
+    bothReconnectingRef.current = false;
+    markSignalEpoch();
     setConn({ kind: "connecting", peerId });
     if (hadVideoBeforeRefreshRef.current) {
       restoringVideoRef.current = true;
       videoReconnectSelfRef.current = true;
       setVideo("reconnecting");
     }
-    void sendSignal(sessionId, peerId, "reconnect");
+    void sendReconnectSignal(peerId, "reconnect");
     const restoring = hadVideoBeforeRefreshRef.current;
     showNotice(
       restoring ? "Reconnecting chat and video…" : "Reconnecting…",
@@ -519,6 +548,7 @@ export default function Home() {
       case "offer":
       case "answer":
       case "ice": {
+        if (isStaleWebRtcSignal(sig)) break;
         const c = connRef.current;
         const peerId =
           c.kind === "connecting" || c.kind === "connected" ? c.peerId : null;
@@ -536,21 +566,35 @@ export default function Home() {
           (c.kind === "connected" || c.kind === "connecting") &&
           c.peerId === sig.fromId
         ) {
+          if (reconnectAttempted.current) {
+            bothReconnectingRef.current = true;
+          }
+          if (!shouldRespondToReconnect(sig.fromId)) {
+            break;
+          }
+          markSignalEpoch();
           if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
           resetVideoState(true);
           peerRef.current?.close();
           peerRef.current = null;
           startPeer(sig.fromId, false);
           setConn({ kind: "connecting", peerId: sig.fromId });
-          void sendSignal(sessionId, sig.fromId, "reconnect-ready");
+          void sendReconnectSignal(sig.fromId, "reconnect-ready");
         }
         break;
       }
       case "reconnect-ready": {
         const c = connRef.current;
-        if (c.kind === "connecting" && c.peerId === sig.fromId && !peerRef.current) {
+        if (
+          c.kind === "connecting" &&
+          c.peerId === sig.fromId &&
+          shouldBeReconnectInitiator(sig.fromId)
+        ) {
           if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
+          peerRef.current?.close();
+          peerRef.current = null;
           startPeer(sig.fromId, true);
+          kickPoll();
         }
         break;
       }
@@ -571,9 +615,22 @@ export default function Home() {
   }
 
   const processSignalRef = useRef(processSignal);
+  const pollKickRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     processSignalRef.current = processSignal;
   });
+
+  function kickPoll() {
+    pollKickRef.current?.();
+  }
+
+  async function sendReconnectSignal(
+    toId: string,
+    type: "reconnect" | "reconnect-ready",
+  ) {
+    await sendSignal(sessionId, toId, type);
+    kickPoll();
+  }
 
   useEffect(() => {
     peersRef.current = peers;
@@ -605,14 +662,33 @@ export default function Home() {
         const data = await poll(sessionId);
         if (!active) return;
         setPeers(data.peers);
-        for (const s of data.signals) processSignalRef.current(s);
+        const handshake = data.signals.filter(
+          (s) => s.type === "reconnect" || s.type === "reconnect-ready",
+        );
+        const rest = data.signals.filter(
+          (s) => s.type !== "reconnect" && s.type !== "reconnect-ready",
+        );
+        for (const s of handshake) processSignalRef.current(s);
+        for (const s of rest) processSignalRef.current(s);
       } catch {}
-      if (active) timer = setTimeout(tick, POLL_INTERVAL_MS);
+      if (!active) return;
+      const delay =
+        connRef.current.kind === "connecting"
+          ? RECONNECT_POLL_INTERVAL_MS
+          : POLL_INTERVAL_MS;
+      timer = setTimeout(tick, delay);
+    };
+
+    pollKickRef.current = () => {
+      if (!active) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(tick, 0);
     };
     tick();
 
     return () => {
       active = false;
+      pollKickRef.current = null;
       if (timer) clearTimeout(timer);
     };
   }, [phase, sessionId]);
@@ -620,6 +696,7 @@ export default function Home() {
   useEffect(() => {
     setSessionId(getOrCreateSessionId());
     if (hasPendingReconnect()) {
+      markSignalEpoch();
       setSkipIntro(true);
       setPhase("live");
     }
@@ -684,7 +761,7 @@ export default function Home() {
   }, [phase, sessionId]);
 
   useEffect(() => {
-    if (phase !== "live" || !sessionId || !myLocation || reconnectAttempted.current) {
+    if (phase !== "live" || !sessionId || reconnectAttempted.current) {
       return;
     }
     const pending = consumePendingReconnect();
@@ -697,7 +774,7 @@ export default function Home() {
     }
     attemptReconnect(pending.peerId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reconnect once after refresh
-  }, [phase, sessionId, myLocation]);
+  }, [phase, sessionId]);
 
   function handleEnter() {
     setGateProgress(GATE_ENTER_PROGRESS);

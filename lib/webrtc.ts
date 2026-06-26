@@ -28,6 +28,7 @@ export class PeerSession {
   private closed = false;
   private readonly cb: PeerCallbacks;
   private pendingCandidates: RTCIceCandidateInit[] = [];
+  private pendingAnswer: RTCSessionDescriptionInit | null = null;
 
   constructor(initiator: boolean, cb: PeerCallbacks) {
     this.cb = cb;
@@ -47,6 +48,7 @@ export class PeerSession {
         if (this.pc.localDescription) {
           this.cb.onSignal("offer", JSON.stringify(this.pc.localDescription));
         }
+        await this.flushPendingAnswer();
       } finally {
         this.makingOffer = false;
       }
@@ -101,13 +103,30 @@ export class PeerSession {
     }
 
     const desc = data as RTCSessionDescriptionInit;
-    const offerCollision =
-      desc.type === "offer" &&
-      (this.makingOffer || this.pc.signalingState !== "stable");
-    this.ignoreOffer = !this.polite && offerCollision;
-    if (this.ignoreOffer) return;
 
-    await this.pc.setRemoteDescription(desc);
+    if (desc.type === "answer") {
+      const state = this.pc.signalingState;
+      if (state === "stable") {
+        // Stale/duplicate answer, or answer that arrived before our local offer.
+        if (this.pc.remoteDescription) return;
+        this.pendingAnswer = desc;
+        return;
+      }
+      if (state !== "have-local-offer") return;
+    }
+
+    if (desc.type === "offer") {
+      const offerCollision =
+        this.makingOffer || this.pc.signalingState !== "stable";
+      this.ignoreOffer = !this.polite && offerCollision;
+      if (this.ignoreOffer) return;
+    }
+
+    try {
+      await this.pc.setRemoteDescription(desc);
+    } catch {
+      return;
+    }
     await this.flushPendingCandidates();
     if (desc.type === "offer") {
       await this.pc.setLocalDescription();
@@ -115,6 +134,17 @@ export class PeerSession {
         this.cb.onSignal("answer", JSON.stringify(this.pc.localDescription));
       }
     }
+  }
+
+  private async flushPendingAnswer() {
+    if (!this.pendingAnswer || this.closed) return;
+    if (this.pc.signalingState !== "have-local-offer") return;
+    const desc = this.pendingAnswer;
+    this.pendingAnswer = null;
+    try {
+      await this.pc.setRemoteDescription(desc);
+      await this.flushPendingCandidates();
+    } catch {}
   }
 
   private async flushPendingCandidates() {

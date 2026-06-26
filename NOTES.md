@@ -67,6 +67,11 @@
   - Stale `PeerSession` callback guards — closed sessions can no longer tear down a new peer.
   - Video `reconnecting` state + full-screen overlay (“waiting for stranger” / “reconnecting your video”).
   - `sessionStorage` saves `hadVideo` on `pagehide`; auto re-request + auto-accept after chat reconnects.
+- **Refresh reconnect reliability** (unreleased):
+  - Both-refreshed tie-break — lower `sessionId` initiates WebRTC; higher id responds (fixes dual-polite deadlock).
+  - Single-refresh fix — staying peer tears down old `RTCPeerConnection` on `reconnect` even if still connected.
+  - Faster handshake — reconnect starts before geolocation; 350ms poll while `connecting`; immediate poll after reconnect signals.
+  - Stale SDP guard — `signalEpoch` drops pre-refresh mailbox offers/answers; safe answer buffering in `PeerSession`.
 - **Line/dot sync after refresh** (`e2bf58b`):
   - Deterministic privacy offset per session ID.
   - Live `connectedPeerLocation` from poll; peer markers `setLngLat` every tick.
@@ -81,6 +86,7 @@
 - `line-trim-offset` clamped to `[0, 0.5]` — Mapbox rejects tiny negative floats.
 - Refresh reconnect: `blockReconnectSave` on intentional End; tab close while connected uses 15s stale timeout.
 - Video after refresh: camera does not survive reload — chat reconnects first, then video is auto-requested; both sides see a reconnecting overlay until streams resume.
+- Reconnect poll cadence: 350ms while `connecting`, 1.5s otherwise; geolocation runs in parallel with reconnect, not as a gate.
 - **Entry gate + map share one WorldMap instance** — map preloads under scroll overlay in `previewMode` (slow spin); handoff to live intro on enter.
 - **Geolocation on click, not after exit animation** — browsers require a user gesture; no IP/network fallback (kept simple after user feedback).
 - **Cosmic backdrop stays mounted in live phase** — opacity toggled (not unmounted) for smooth zoom in/out; `MilkyWayScene` progress `1` at globe view.
@@ -278,6 +284,21 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 - **`lib/session.ts`** — `savePendingReconnect(peerId, hadVideo)` persists active video across reload.
 - **`lib/webrtc.ts`** — suppress ICE signals after `close()`.
 - **`lib/return-home-copy.ts`** — return-home warning when video is reconnecting.
+
+---
+
+### fix(webrtc): reconnect reliability for single/both refresh and stale SDP
+
+**Phase:** 2  
+**Files:** `app/page.tsx`, `lib/presence.ts`, `lib/webrtc.ts`, `NOTES.md`
+
+- **`app/page.tsx`**:
+  - Session-id tie-break when both users refresh (`shouldBeReconnectInitiator` / `shouldRespondToReconnect`).
+  - Staying peer always replaces old peer on `reconnect` (fixes single-refresh deadlock).
+  - `signalEpoch` + handshake-first poll ordering — ignore pre-refresh SDP in mailbox.
+  - Reconnect before geolocation; `kickPoll()` after reconnect signals; faster poll while connecting.
+- **`lib/presence.ts`** — `RECONNECT_POLL_INTERVAL_MS` (350ms).
+- **`lib/webrtc.ts`** — ignore/buffer answers in wrong signaling state; try/catch on `setRemoteDescription`.
 
 ---
 
