@@ -9,6 +9,7 @@ export type SignalType =
   | "answer" // WebRTC SDP answer
   | "ice" // WebRTC ICE candidate
   | "reconnect" // peer refreshed — renegotiate WebRTC without dropping busy
+  | "reconnect-ready" // responder recreated peer — initiator may send offer
   | "end"; // hang up / leave the connection
 
 export interface PeerDot {

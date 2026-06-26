@@ -62,6 +62,11 @@
   - `sessionStorage` session ID + pending peer; skip `leave()` while connected.
   - `reconnect` signal renegotiates WebRTC; 30s grace window.
   - `/api/join` preserves `busy`; globe intro skipped when restoring session.
+- **Refresh reconnect hardening + video restore** (unreleased):
+  - `reconnect-ready` handshake — responder recreates peer before initiator sends SDP (fixes dropped offers on refresh).
+  - Stale `PeerSession` callback guards — closed sessions can no longer tear down a new peer.
+  - Video `reconnecting` state + full-screen overlay (“waiting for stranger” / “reconnecting your video”).
+  - `sessionStorage` saves `hadVideo` on `pagehide`; auto re-request + auto-accept after chat reconnects.
 - **Line/dot sync after refresh** (`e2bf58b`):
   - Deterministic privacy offset per session ID.
   - Live `connectedPeerLocation` from poll; peer markers `setLngLat` every tick.
@@ -75,6 +80,7 @@
 - Message orb + disconnect coords snapshotted at event time.
 - `line-trim-offset` clamped to `[0, 0.5]` — Mapbox rejects tiny negative floats.
 - Refresh reconnect: `blockReconnectSave` on intentional End; tab close while connected uses 15s stale timeout.
+- Video after refresh: camera does not survive reload — chat reconnects first, then video is auto-requested; both sides see a reconnecting overlay until streams resume.
 - **Entry gate + map share one WorldMap instance** — map preloads under scroll overlay in `previewMode` (slow spin); handoff to live intro on enter.
 - **Geolocation on click, not after exit animation** — browsers require a user gesture; no IP/network fallback (kept simple after user feedback).
 - **Cosmic backdrop stays mounted in live phase** — opacity toggled (not unmounted) for smooth zoom in/out; `MilkyWayScene` progress `1` at globe view.
@@ -255,6 +261,23 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 - **`lib/stats.ts`** — `activeRegionCount()` (coarse lat/lng buckets), `utcStartOfDay()` for connection tally.
 - **`app/components/entry/GateStatsBar.tsx`** — polls `/api/stats` instead of a fake `pulse-gate-probe` poll (which never joined and always showed 0 strangers).
 - **`lib/api.ts`** / **`lib/types.ts`** — `fetchStats()` + `GateStatsResponse` type.
+
+---
+
+### fix(webrtc): reconnect handshake and video restore after page refresh
+
+**Phase:** 2  
+**Files:** `app/api/signal/route.ts`, `app/page.tsx`, `lib/return-home-copy.ts`, `lib/session.ts`, `lib/types.ts`, `lib/webrtc.ts`, `NOTES.md`
+
+- **`lib/types.ts`** / **`app/api/signal/route.ts`** — `reconnect-ready` signal so the staying peer recreates WebRTC before the refreshed peer sends an offer.
+- **`app/page.tsx`**:
+  - `attemptReconnect()` sends `reconnect` first; starts initiator peer only after `reconnect-ready`.
+  - `PeerSession` callbacks ignore events from superseded sessions.
+  - `reconnecting` video state with overlay copy for self-refresh vs stranger-refresh.
+  - Auto video restore after chat reconnects (`hadVideo` in `sessionStorage`, auto `video-request` + auto-accept).
+- **`lib/session.ts`** — `savePendingReconnect(peerId, hadVideo)` persists active video across reload.
+- **`lib/webrtc.ts`** — suppress ICE signals after `close()`.
+- **`lib/return-home-copy.ts`** — return-home warning when video is reconnecting.
 
 ---
 

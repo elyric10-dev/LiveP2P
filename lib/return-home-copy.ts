@@ -5,7 +5,7 @@ type Conn =
   | { kind: "connecting"; peerId: string }
   | { kind: "connected"; peerId: string };
 
-type VideoState = "none" | "requesting" | "incoming" | "active";
+type VideoState = "none" | "requesting" | "incoming" | "reconnecting" | "active";
 
 export function getReturnHomeCopy(
   conn: Conn,
@@ -19,11 +19,13 @@ export function getReturnHomeCopy(
     };
   }
 
-  if (video === "requesting" || video === "incoming") {
+  if (video === "requesting" || video === "incoming" || video === "reconnecting") {
     return {
       title: "Leave the globe?",
       subtitle:
-        "A video call is being set up. Going back to outer space will cancel it and return you to the Pulse homepage.",
+        video === "reconnecting"
+          ? "A video call is reconnecting after a refresh. Going back to outer space will end the call and return you to the Pulse homepage."
+          : "A video call is being set up. Going back to outer space will cancel it and return you to the Pulse homepage.",
     };
   }
 

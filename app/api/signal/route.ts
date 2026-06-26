@@ -13,6 +13,7 @@ const VALID_TYPES: SignalType[] = [
   "answer",
   "ice",
   "reconnect",
+  "reconnect-ready",
   "end",
 ];
 

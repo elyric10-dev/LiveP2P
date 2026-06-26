@@ -35,7 +35,7 @@ export class PeerSession {
     this.pc = new RTCPeerConnection(ICE_CONFIG);
 
     this.pc.onicecandidate = ({ candidate }) => {
-      if (candidate) {
+      if (candidate && !this.closed) {
         this.cb.onSignal("ice", JSON.stringify(candidate));
       }
     };

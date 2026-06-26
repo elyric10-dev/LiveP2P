@@ -28,7 +28,7 @@ type Conn =
   | { kind: "connecting"; peerId: string }
   | { kind: "connected"; peerId: string };
 
-type VideoState = "none" | "requesting" | "incoming" | "active";
+type VideoState = "none" | "requesting" | "incoming" | "reconnecting" | "active";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const REJECTED_LINE_MS = 2_500;
@@ -97,6 +97,9 @@ export default function Home() {
   const requestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectWaitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttempted = useRef(false);
+  const hadVideoBeforeRefreshRef = useRef(false);
+  const restoringVideoRef = useRef(false);
+  const videoReconnectSelfRef = useRef(false);
   const blockReconnectSave = useRef(false);
   const rejectedLineTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const orbId = useRef(0);
@@ -163,10 +166,41 @@ export default function Home() {
     }, REJECTED_LINE_MS);
   }
 
+  function resetVideoState(preserveForReconnect = false) {
+    const wasActive = videoRef.current === "active";
+    peerRef.current?.stopVideo();
+    setLocalStream(null);
+    setRemoteStream(null);
+    if (preserveForReconnect && wasActive) {
+      restoringVideoRef.current = true;
+      videoReconnectSelfRef.current = false;
+      setVideo("reconnecting");
+    } else {
+      restoringVideoRef.current = false;
+      setVideo("none");
+    }
+  }
+
+  function clearVideoRestore() {
+    hadVideoBeforeRefreshRef.current = false;
+    restoringVideoRef.current = false;
+    videoReconnectSelfRef.current = false;
+  }
+
+  function maybeRestoreVideoAfterReconnect() {
+    const shouldRestore =
+      hadVideoBeforeRefreshRef.current || videoRef.current === "reconnecting";
+    if (!shouldRestore || !peerRef.current) return;
+    hadVideoBeforeRefreshRef.current = false;
+    restoringVideoRef.current = true;
+    startVideoRequest();
+  }
+
   function teardown(message?: string, rejectedPeerId?: string) {
     if (requestTimer.current) clearTimeout(requestTimer.current);
     if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
     clearPendingReconnect();
+    clearVideoRestore();
     peerRef.current?.close();
     peerRef.current = null;
     setLocalStream(null);
@@ -215,6 +249,7 @@ export default function Home() {
     peerRef.current = null;
     setLocalStream(null);
     setRemoteStream(null);
+    clearVideoRestore();
     setVideo("none");
 
     setDisconnectAnim({
@@ -241,20 +276,30 @@ export default function Home() {
   function startPeer(peerId: string, initiator: boolean) {
     const ps = new PeerSession(initiator, {
       onSignal: (type: DescType, payload: string) => {
+        if (peerRef.current !== ps) return;
         void sendSignal(sessionId, peerId, type, payload);
       },
       onChat: (text) => {
+        if (peerRef.current !== ps) return;
         addMessage(false, text);
         spawnMessageOrb("incoming", peerId);
       },
-      onControl: (ctrl) => handleControl(ctrl),
-      onRemoteStream: (stream) => setRemoteStream(stream),
+      onControl: (ctrl) => {
+        if (peerRef.current !== ps) return;
+        handleControl(ctrl);
+      },
+      onRemoteStream: (stream) => {
+        if (peerRef.current !== ps) return;
+        setRemoteStream(stream);
+      },
       onConnectionState: (state) => {
+        if (peerRef.current !== ps) return;
         const c = connRef.current;
         if (state !== "failed" && state !== "disconnected") return;
 
         if (c.kind === "connected") {
           // Peer may have refreshed — wait for reconnect signal.
+          resetVideoState(true);
           peerRef.current?.close();
           peerRef.current = null;
           setConn({ kind: "connecting", peerId: c.peerId });
@@ -276,8 +321,10 @@ export default function Home() {
         }
       },
       onChannelOpen: () => {
+        if (peerRef.current !== ps) return;
         if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
         setConn({ kind: "connected", peerId });
+        maybeRestoreVideoAfterReconnect();
       },
     });
     peerRef.current = ps;
@@ -285,22 +332,44 @@ export default function Home() {
 
   function attemptReconnect(peerId: string) {
     setConn({ kind: "connecting", peerId });
-    startPeer(peerId, true);
+    if (hadVideoBeforeRefreshRef.current) {
+      restoringVideoRef.current = true;
+      videoReconnectSelfRef.current = true;
+      setVideo("reconnecting");
+    }
     void sendSignal(sessionId, peerId, "reconnect");
-    showNotice("Reconnecting…");
+    const restoring = hadVideoBeforeRefreshRef.current;
+    showNotice(
+      restoring ? "Reconnecting chat and video…" : "Reconnecting…",
+    );
+    if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
+    reconnectWaitTimer.current = setTimeout(() => {
+      if (
+        connRef.current.kind === "connecting" &&
+        connRef.current.peerId === peerId &&
+        !peerRef.current
+      ) {
+        beginDisconnect("Could not reconnect.");
+      }
+    }, RECONNECT_WAIT_MS);
   }
 
   function handleControl(ctrl: PeerControl) {
     const ps = peerRef.current;
     switch (ctrl) {
       case "video-request":
-        if (videoRef.current === "none") setVideo("incoming");
+        if (videoRef.current === "reconnecting" || videoRef.current === "requesting") {
+          acceptVideo();
+        } else if (videoRef.current === "none") {
+          setVideo("incoming");
+        }
         break;
       case "video-accept":
-        if (videoRef.current === "requesting" && ps) {
+        if ((videoRef.current === "requesting" || videoRef.current === "reconnecting") && ps) {
           ps.startVideo()
             .then((stream) => {
               setLocalStream(stream);
+              restoringVideoRef.current = false;
               setVideo("active");
             })
             .catch(() => {
@@ -320,6 +389,7 @@ export default function Home() {
         ps?.stopVideo();
         setLocalStream(null);
         setRemoteStream(null);
+        clearVideoRestore();
         setVideo("none");
         break;
     }
@@ -370,7 +440,12 @@ export default function Home() {
   }
 
   function startVideoRequest() {
-    if (videoRef.current !== "none" || !peerRef.current) return;
+    if (
+      (videoRef.current !== "none" && videoRef.current !== "reconnecting") ||
+      !peerRef.current
+    ) {
+      return;
+    }
     setVideo("requesting");
     peerRef.current.sendControl("video-request");
   }
@@ -382,6 +457,7 @@ export default function Home() {
       .then((stream) => {
         setLocalStream(stream);
         ps.sendControl("video-accept");
+        restoringVideoRef.current = false;
         setVideo("active");
       })
       .catch(() => {
@@ -402,6 +478,7 @@ export default function Home() {
     ps?.sendControl("video-end");
     setLocalStream(null);
     setRemoteStream(null);
+    clearVideoRestore();
     setVideo("none");
   }
 
@@ -460,10 +537,20 @@ export default function Home() {
           c.peerId === sig.fromId
         ) {
           if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
+          resetVideoState(true);
           peerRef.current?.close();
           peerRef.current = null;
           startPeer(sig.fromId, false);
           setConn({ kind: "connecting", peerId: sig.fromId });
+          void sendSignal(sessionId, sig.fromId, "reconnect-ready");
+        }
+        break;
+      }
+      case "reconnect-ready": {
+        const c = connRef.current;
+        if (c.kind === "connecting" && c.peerId === sig.fromId && !peerRef.current) {
+          if (reconnectWaitTimer.current) clearTimeout(reconnectWaitTimer.current);
+          startPeer(sig.fromId, true);
         }
         break;
       }
@@ -547,7 +634,10 @@ export default function Home() {
       }
       const c = connRef.current;
       if (c.kind === "connecting" || c.kind === "connected") {
-        savePendingReconnect(c.peerId);
+        savePendingReconnect(
+          c.peerId,
+          videoRef.current === "active" || videoRef.current === "reconnecting",
+        );
         return;
       }
       leave(sessionId);
@@ -600,6 +690,11 @@ export default function Home() {
     const pending = consumePendingReconnect();
     if (!pending) return;
     reconnectAttempted.current = true;
+    hadVideoBeforeRefreshRef.current = pending.hadVideo;
+    if (pending.hadVideo) {
+      restoringVideoRef.current = true;
+      videoReconnectSelfRef.current = true;
+    }
     attemptReconnect(pending.peerId);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reconnect once after refresh
   }, [phase, sessionId, myLocation]);
@@ -841,9 +936,31 @@ export default function Home() {
         />
       )}
 
+      {!inGate && video === "reconnecting" && (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-black/85 px-6 text-center backdrop-blur-sm">
+          <div className="max-w-sm space-y-3">
+            <p className="text-lg font-medium text-zinc-100">
+              {videoReconnectSelfRef.current
+                ? "Reconnecting your video call…"
+                : "Waiting for stranger to reconnect video…"}
+            </p>
+            <p className="text-sm text-zinc-400">
+              {videoReconnectSelfRef.current
+                ? "Chat is reconnecting. Video will resume automatically once you\u2019re back online."
+                : "Your chat is still connected. Video will resume automatically once they\u2019re back."}
+            </p>
+            <div className="mx-auto h-1 w-24 overflow-hidden rounded-full bg-zinc-800">
+              <div className="h-full w-1/2 animate-pulse rounded-full bg-violet-500" />
+            </div>
+          </div>
+        </div>
+      )}
+
       {!inGate && video === "requesting" && (
         <div className="absolute bottom-24 left-1/2 z-30 -translate-x-1/2 rounded-full bg-zinc-800/90 px-4 py-2 text-sm text-zinc-100 shadow-lg backdrop-blur">
-          Waiting for stranger to accept video…
+          {restoringVideoRef.current
+            ? "Reconnecting video call…"
+            : "Waiting for stranger to accept video…"}
         </div>
       )}
 

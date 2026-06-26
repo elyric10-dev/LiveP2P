@@ -13,10 +13,10 @@ export function getOrCreateSessionId(): string {
   return id;
 }
 
-export function savePendingReconnect(peerId: string) {
+export function savePendingReconnect(peerId: string, hadVideo = false) {
   sessionStorage.setItem(
     RECONNECT_KEY,
-    JSON.stringify({ peerId, at: Date.now() }),
+    JSON.stringify({ peerId, at: Date.now(), hadVideo }),
   );
 }
 
@@ -32,12 +32,19 @@ export function hasPendingReconnect(): boolean {
 }
 
 /** Read and clear pending reconnect intent (call once on mount). */
-export function consumePendingReconnect(): { peerId: string } | null {
+export function consumePendingReconnect(): {
+  peerId: string;
+  hadVideo: boolean;
+} | null {
   const raw = sessionStorage.getItem(RECONNECT_KEY);
   sessionStorage.removeItem(RECONNECT_KEY);
   if (!raw) return null;
   try {
-    const { peerId, at } = JSON.parse(raw) as { peerId?: string; at?: number };
+    const { peerId, at, hadVideo } = JSON.parse(raw) as {
+      peerId?: string;
+      at?: number;
+      hadVideo?: boolean;
+    };
     if (
       typeof peerId !== "string" ||
       typeof at !== "number" ||
@@ -45,7 +52,7 @@ export function consumePendingReconnect(): { peerId: string } | null {
     ) {
       return null;
     }
-    return { peerId };
+    return { peerId, hadVideo: hadVideo === true };
   } catch {
     return null;
   }
