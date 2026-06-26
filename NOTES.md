@@ -62,7 +62,7 @@
   - `sessionStorage` session ID + pending peer; skip `leave()` while connected.
   - `reconnect` signal renegotiates WebRTC; 30s grace window.
   - `/api/join` preserves `busy`; globe intro skipped when restoring session.
-- **Refresh reconnect hardening + video restore** (unreleased):
+- **Refresh reconnect hardening + video restore** (`ecac00b`):
   - `reconnect-ready` handshake — responder recreates peer before initiator sends SDP (fixes dropped offers on refresh).
   - Stale `PeerSession` callback guards — closed sessions can no longer tear down a new peer.
   - Video `reconnecting` state + full-screen overlay (“waiting for stranger” / “reconnecting your video”).
@@ -264,7 +264,7 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 
 ---
 
-### fix(webrtc): reconnect handshake and video restore after page refresh
+### `ecac00b` — fix(webrtc): reconnect handshake and video restore after page refresh
 
 **Phase:** 2  
 **Files:** `app/api/signal/route.ts`, `app/page.tsx`, `lib/return-home-copy.ts`, `lib/session.ts`, `lib/types.ts`, `lib/webrtc.ts`, `NOTES.md`
@@ -301,3 +301,4 @@ Replaced by Milky Way Three.js scroll entry. Legacy files may still exist on dis
 | `2a1b392`   | feat(ui): Milky Way scroll entry with stars behind the globe        | 2        |
 | `c8afb40`   | feat(ui): entry features, return-home, chat/video gallery           | 2        |
 | `03cbfb4`   | fix(gate): live stats bar via GET /api/stats                          | 2        |
+| `ecac00b`   | fix(webrtc): reconnect handshake and video restore after page refresh | 2        |
