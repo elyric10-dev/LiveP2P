@@ -780,10 +780,36 @@ export default function Home() {
         geoActiveRef.current = false;
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
-        await join(sessionId, lat, lng, {
-          preserveBusy: reconnectAttempted.current,
-        });
-        setMyLocation({ lat, lng });
+
+        // Show a persistent banner while the server wakes up (Neon cold start
+        // can take ~20s on the free tier; the notice is cleared on success).
+        setNotice("Joining the map…");
+
+        // Retry join up to 4 times with exponential back-off.
+        let joined = false;
+        for (let attempt = 0; attempt < 4 && !joined; attempt++) {
+          try {
+            await join(sessionId, lat, lng, {
+              preserveBusy: reconnectAttempted.current,
+            });
+            joined = true;
+          } catch {
+            if (attempt < 3) {
+              await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+            }
+          }
+        }
+
+        if (joined) {
+          setNotice(null);
+          setMyLocation({ lat, lng });
+        } else {
+          showNotice("Couldn't register your location. Retrying…");
+          window.setTimeout(() => {
+            geoActiveRef.current = false;
+            requestLocation();
+          }, 3000);
+        }
       },
       (err) => {
         geoActiveRef.current = false;

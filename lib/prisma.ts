@@ -1,12 +1,15 @@
 import { PrismaClient } from "@prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaNeonHttp } from "@prisma/adapter-neon";
 
-// Prisma 7 connects through a driver adapter. We pass the (pooled) Postgres
-// connection string to the pg adapter.
+// PrismaNeonHttp sends every query as a stateless HTTP POST to Neon's
+// serverless proxy. Unlike the pg/WebSocket adapters, there is no persistent
+// TCP connection to establish — so Neon's compute cold-start (~20s on the
+// free tier) is handled server-side by Neon's proxy, not timed-out by the
+// client or Vercel's function runner.
 //
-// Reuse a single PrismaClient across hot reloads (dev) and warm serverless
-// invocations to avoid exhausting Postgres connections. Use a *pooled*
-// connection string for DATABASE_URL in production (PgBouncer / Neon pooler).
+// Note: PrismaNeonHttp does not support interactive transactions (no BEGIN/
+// COMMIT). None of the routes here use transactions — they rely on independent
+// deleteMany/update calls instead (see poll/route.ts comment).
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
@@ -16,7 +19,7 @@ function createClient() {
   if (!connectionString) {
     throw new Error("DATABASE_URL is not set");
   }
-  const adapter = new PrismaPg({ connectionString });
+  const adapter = new PrismaNeonHttp(connectionString, {});
   return new PrismaClient({
     adapter,
     log:
