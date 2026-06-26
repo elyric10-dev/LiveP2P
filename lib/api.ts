@@ -5,11 +5,17 @@ export async function join(
   id: string,
   lat: number,
   lng: number,
+  opts?: { preserveBusy?: boolean },
 ): Promise<void> {
   await fetch("/api/join", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, lat, lng }),
+    body: JSON.stringify({
+      id,
+      lat,
+      lng,
+      preserveBusy: opts?.preserveBusy === true,
+    }),
   });
 }
 

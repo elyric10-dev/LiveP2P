@@ -99,6 +99,7 @@ export default function Home() {
   const reconnectAttempted = useRef(false);
   const bothReconnectingRef = useRef(false);
   const signalEpochRef = useRef(0);
+  const lastDrainedSignalAtRef = useRef(0);
   const hadVideoBeforeRefreshRef = useRef(false);
   const restoringVideoRef = useRef(false);
   const videoReconnectSelfRef = useRef(false);
@@ -191,12 +192,21 @@ export default function Home() {
   }
 
   function markSignalEpoch() {
-    signalEpochRef.current = Date.now();
+    signalEpochRef.current = lastDrainedSignalAtRef.current;
   }
 
   function isStaleWebRtcSignal(sig: SignalMsg): boolean {
     if (!signalEpochRef.current) return false;
-    return new Date(sig.createdAt).getTime() < signalEpochRef.current;
+    return new Date(sig.createdAt).getTime() <= signalEpochRef.current;
+  }
+
+  function noteDrainedSignals(signals: SignalMsg[]) {
+    for (const s of signals) {
+      const t = new Date(s.createdAt).getTime();
+      if (t > lastDrainedSignalAtRef.current) {
+        lastDrainedSignalAtRef.current = t;
+      }
+    }
   }
 
   /** Refreshed user starts WebRTC; when both refreshed, lower session id wins. */
@@ -227,6 +237,7 @@ export default function Home() {
     clearPendingReconnect();
     clearVideoRestore();
     signalEpochRef.current = 0;
+    lastDrainedSignalAtRef.current = 0;
     peerRef.current?.close();
     peerRef.current = null;
     setLocalStream(null);
@@ -427,7 +438,7 @@ export default function Home() {
   function requestConnection(peerId: string) {
     if (connRef.current.kind !== "idle") return;
     setConn({ kind: "requesting", peerId });
-    void sendSignal(sessionId, peerId, "request");
+    void sendSignal(sessionId, peerId, "request").then(() => kickPoll());
     requestTimer.current = setTimeout(() => {
       if (
         connRef.current.kind === "requesting" &&
@@ -450,7 +461,7 @@ export default function Home() {
     if (connRef.current.kind !== "incoming") return;
     const peerId = connRef.current.peerId;
     startPeer(peerId, false);
-    void sendSignal(sessionId, peerId, "accept");
+    void sendSignal(sessionId, peerId, "accept").then(() => kickPoll());
     setConn({ kind: "connecting", peerId });
   }
 
@@ -521,7 +532,7 @@ export default function Home() {
           // Both users tapped each other — connect instead of declining.
           if (requestTimer.current) clearTimeout(requestTimer.current);
           startPeer(sig.fromId, false);
-          void sendSignal(sessionId, sig.fromId, "accept");
+          void sendSignal(sessionId, sig.fromId, "accept").then(() => kickPoll());
           setConn({ kind: "connecting", peerId: sig.fromId });
         } else {
           void sendSignal(sessionId, sig.fromId, "decline");
@@ -662,6 +673,7 @@ export default function Home() {
         const data = await poll(sessionId);
         if (!active) return;
         setPeers(data.peers);
+        noteDrainedSignals(data.signals);
         const handshake = data.signals.filter(
           (s) => s.type === "reconnect" || s.type === "reconnect-ready",
         );
@@ -696,7 +708,6 @@ export default function Home() {
   useEffect(() => {
     setSessionId(getOrCreateSessionId());
     if (hasPendingReconnect()) {
-      markSignalEpoch();
       setSkipIntro(true);
       setPhase("live");
     }
@@ -736,7 +747,9 @@ export default function Home() {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         setMyLocation({ lat, lng });
-        await join(sessionId, lat, lng);
+        await join(sessionId, lat, lng, {
+          preserveBusy: reconnectAttempted.current,
+        });
       },
       (err) => {
         geoActiveRef.current = false;

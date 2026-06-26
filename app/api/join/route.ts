@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "invalid body" }, { status: 400 });
   }
 
-  const { id, lat, lng } = (body ?? {}) as Record<string, unknown>;
+  const { id, lat, lng, preserveBusy } = (body ?? {}) as Record<string, unknown>;
 
   if (typeof id !== "string" || id.length < 8 || id.length > 64) {
     return Response.json({ error: "invalid id" }, { status: 400 });
@@ -26,6 +26,7 @@ export async function POST(request: NextRequest) {
   }
 
   const offset = applyPrivacyOffset(lat as number, lng as number, id);
+  const keepBusy = preserveBusy === true;
 
   await prisma.presence.upsert({
     where: { id },
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
       lat: offset.lat,
       lng: offset.lng,
       lastSeen: new Date(),
-      // Preserve busy on re-join (e.g. page refresh mid-chat).
+      ...(keepBusy ? {} : { busy: false }),
     },
   });
 
