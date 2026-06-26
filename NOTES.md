@@ -246,7 +246,7 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 
 ---
 
-### fix(gate): live stats bar via GET /api/stats
+### `03cbfb4` — fix(gate): live stats bar via GET /api/stats
 
 **Phase:** 2  
 **Files:** `app/api/stats/route.ts`, `app/components/entry/GateStatsBar.tsx`, `lib/api.ts`, `lib/stats.ts`, `lib/types.ts`, `NOTES.md`
@@ -277,4 +277,4 @@ Replaced by Milky Way Three.js scroll entry. Legacy files may still exist on dis
 | `e2bf58b`   | fix: restore connection on refresh and keep line synced to peer dot | 2        |
 | `2a1b392`   | feat(ui): Milky Way scroll entry with stars behind the globe        | 2        |
 | `c8afb40`   | feat(ui): entry features, return-home, chat/video gallery           | 2        |
-| _(latest)_  | fix(gate): live stats bar via GET /api/stats                          | 2        |
+| `03cbfb4`   | fix(gate): live stats bar via GET /api/stats                          | 2        |
