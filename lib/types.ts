@@ -32,6 +32,12 @@ export interface PollResponse {
   signals: SignalMsg[];
 }
 
+export interface GateStatsResponse {
+  strangersOnline: number;
+  connectionsToday: number;
+  countries: number;
+}
+
 /** Map line from me → peer while connecting. */
 export type ConnectionLineStatus = "pending" | "connected" | "rejected";
 

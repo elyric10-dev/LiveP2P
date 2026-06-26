@@ -1,5 +1,5 @@
 // Client-side helpers for talking to the coordination API.
-import type { PollResponse, SignalType } from "@/lib/types";
+import type { GateStatsResponse, PollResponse, SignalType } from "@/lib/types";
 
 export async function join(
   id: string,
@@ -18,6 +18,12 @@ export async function poll(id: string): Promise<PollResponse> {
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`poll failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchStats(): Promise<GateStatsResponse> {
+  const res = await fetch("/api/stats", { cache: "no-store" });
+  if (!res.ok) throw new Error(`stats failed: ${res.status}`);
   return res.json();
 }
 

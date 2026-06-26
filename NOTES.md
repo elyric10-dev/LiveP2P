@@ -47,6 +47,7 @@
   - **Enter CTA** — interactive as soon as the card is visibly on screen (`enterReady`), not only at full scroll threshold.
   - **Return home** — zoom out on live map (≤ ~1.3 zoom) shows `ReturnHomePrompt`; **Return to outer space** tears down session, lands directly on enter-globe (no Milky Way flash) with smooth fade; map resets to preview globe.
   - **Chat & Video hero** — gallery carousel auto-advances chat ↔ video call art with dot indicators.
+  - **Gate stats bar** — live metrics via `GET /api/stats` (polls every 4s): **strangers online** = active presence count, **connections today** = `accept` signals since UTC midnight, **countries** = distinct coarse lat/lng regions from online users (replaces fake probe poll + hardcoded values).
 - **Live enter animation** (`c8afb40`) — no rotation; `flyTo` user location over ~5.2s after enter (reduced-motion / refresh still jump).
 - **Cinematic globe intro** (`12e0eaf`):
   - Mapbox **globe projection** + dark space fog (3D Earth).
@@ -245,6 +246,18 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 
 ---
 
+### fix(gate): live stats bar via GET /api/stats
+
+**Phase:** 2  
+**Files:** `app/api/stats/route.ts`, `app/components/entry/GateStatsBar.tsx`, `lib/api.ts`, `lib/stats.ts`, `lib/types.ts`, `NOTES.md`
+
+- **`app/api/stats/route.ts`** — reaps stale presence/signals; returns `strangersOnline`, `connectionsToday`, `countries`.
+- **`lib/stats.ts`** — `activeRegionCount()` (coarse lat/lng buckets), `utcStartOfDay()` for connection tally.
+- **`app/components/entry/GateStatsBar.tsx`** — polls `/api/stats` instead of a fake `pulse-gate-probe` poll (which never joined and always showed 0 strangers).
+- **`lib/api.ts`** / **`lib/types.ts`** — `fetchStats()` + `GateStatsResponse` type.
+
+---
+
 ### _(superseded)_ — feat(ui): redesign entry gate as Signal Void aurora landing
 
 Replaced by Milky Way Three.js scroll entry. Legacy files may still exist on disk but are no longer imported.
@@ -264,3 +277,4 @@ Replaced by Milky Way Three.js scroll entry. Legacy files may still exist on dis
 | `e2bf58b`   | fix: restore connection on refresh and keep line synced to peer dot | 2        |
 | `2a1b392`   | feat(ui): Milky Way scroll entry with stars behind the globe        | 2        |
 | `c8afb40`   | feat(ui): entry features, return-home, chat/video gallery           | 2        |
+| _(latest)_  | fix(gate): live stats bar via GET /api/stats                          | 2        |

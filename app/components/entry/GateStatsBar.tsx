@@ -1,9 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { poll } from "@/lib/api";
+import { fetchStats } from "@/lib/api";
+import type { GateStatsResponse } from "@/lib/types";
 
-const PROBE_ID = "pulse-gate-probe";
+const EMPTY_STATS: GateStatsResponse = {
+  strangersOnline: 0,
+  connectionsToday: 0,
+  countries: 0,
+};
 
 const STATS = [
   {
@@ -11,21 +16,21 @@ const STATS = [
     label: "STRANGERS ONLINE",
     icon: "target",
     color: "teal",
-    getValue: (peers: number) => formatNum(peers > 0 ? peers : 0),
+    getValue: (s: GateStatsResponse) => formatNum(s.strangersOnline),
   },
   {
     key: "connections",
     label: "CONNECTIONS TODAY",
     icon: "pulse",
     color: "purple",
-    getValue: (peers: number) => formatNum(peers * 47 + 1200),
+    getValue: (s: GateStatsResponse) => formatNum(s.connectionsToday),
   },
   {
     key: "countries",
     label: "COUNTRIES",
     icon: "globe",
     color: "blue",
-    getValue: () => "132",
+    getValue: (s: GateStatsResponse) => formatNum(s.countries),
   },
 ] as const;
 
@@ -69,14 +74,14 @@ export default function GateStatsBar({
 }: {
   earthReached?: boolean;
 }) {
-  const [peerCount, setPeerCount] = useState(0);
+  const [stats, setStats] = useState<GateStatsResponse>(EMPTY_STATS);
 
   useEffect(() => {
     let active = true;
     const tick = async () => {
       try {
-        const data = await poll(PROBE_ID);
-        if (active) setPeerCount(data.peers.length);
+        const data = await fetchStats();
+        if (active) setStats(data);
       } catch {}
     };
     tick();
@@ -104,7 +109,7 @@ export default function GateStatsBar({
             <StatIcon type={stat.icon} color={stat.color} />
             <div>
               <p className="gate-stat-value text-lg font-bold tracking-wide text-white sm:text-xl">
-                {stat.getValue(peerCount)}
+                {stat.getValue(stats)}
               </p>
               <p className="text-[10px] font-medium tracking-widest text-zinc-500 sm:text-xs">
                 {stat.label}
