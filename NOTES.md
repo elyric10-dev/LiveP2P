@@ -67,7 +67,7 @@
   - Stale `PeerSession` callback guards — closed sessions can no longer tear down a new peer.
   - Video `reconnecting` state + full-screen overlay (“waiting for stranger” / “reconnecting your video”).
   - `sessionStorage` saves `hadVideo` on `pagehide`; auto re-request + auto-accept after chat reconnects.
-- **Refresh reconnect reliability** (unreleased):
+- **Refresh reconnect reliability** (`7b8600a`):
   - Both-refreshed tie-break — lower `sessionId` initiates WebRTC; higher id responds (fixes dual-polite deadlock).
   - Single-refresh fix — staying peer tears down old `RTCPeerConnection` on `reconnect` even if still connected.
   - Faster handshake — reconnect starts before geolocation; 350ms poll while `connecting`; immediate poll after reconnect signals.
@@ -287,7 +287,7 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 
 ---
 
-### fix(webrtc): reconnect reliability for single/both refresh and stale SDP
+### `7b8600a` — fix(webrtc): reconnect reliability for single/both refresh and stale SDP
 
 **Phase:** 2  
 **Files:** `app/page.tsx`, `lib/presence.ts`, `lib/webrtc.ts`, `NOTES.md`
@@ -323,3 +323,4 @@ Replaced by Milky Way Three.js scroll entry. Legacy files may still exist on dis
 | `c8afb40`   | feat(ui): entry features, return-home, chat/video gallery           | 2        |
 | `03cbfb4`   | fix(gate): live stats bar via GET /api/stats                          | 2        |
 | `ecac00b`   | fix(webrtc): reconnect handshake and video restore after page refresh | 2        |
+| `7b8600a`   | fix(webrtc): reconnect reliability for single/both refresh and stale SDP | 2    |
