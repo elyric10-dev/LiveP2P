@@ -41,6 +41,13 @@
   - **Enter flow** — geolocation starts **on button click** (user-gesture requirement); map phase switches immediately; single `getCurrentPosition` with `enableHighAccuracy: false` (reliable on desktop Mac).
   - **Cosmic backdrop lifecycle** — visible during gate scroll, through globe intro (rotate + `flyTo`), and **returns when zooming out** below `zoom 5.5`; fades at street-level zoom. Mapbox `star-intensity: 0` (no built-in stars on the globe surface).
   - **Scroll zoom-in** — Mapbox grows from a centre speck (`zoom -2` → `1.0`) as you scroll; slow spin only after the globe is fully formed.
+- **Entry gate features + navigation** _(uncommitted)_:
+  - **Side nav** — visible on load (all breakpoints); **Live map** scrolls to the enter-globe screen (same as **Back to enter**); connect / chat / privacy jump to scroll sections.
+  - **Features scroll** — intro + four full-height blocks (map, connect, chat, privacy) with animated backdrops, parallax glass copy, SVG heroes; stats bar on enter screen.
+  - **Enter CTA** — interactive as soon as the card is visibly on screen (`enterReady`), not only at full scroll threshold.
+  - **Return home** — zoom out on live map (≤ ~1.3 zoom) shows `ReturnHomePrompt`; **Return to outer space** tears down session, lands directly on enter-globe (no Milky Way flash) with smooth fade; map resets to preview globe.
+  - **Chat & Video hero** — gallery carousel auto-advances chat ↔ video call art with dot indicators.
+- **Live enter animation** _(uncommitted)_ — no rotation; `flyTo` user location over ~5.2s after enter (reduced-motion / refresh still jump).
 - **Cinematic globe intro** (`12e0eaf`):
   - Mapbox **globe projection** + dark space fog (3D Earth).
   - Starts at full zoom-out (`zoom 1`).
@@ -72,6 +79,8 @@
 - **Cosmic backdrop stays mounted in live phase** — opacity toggled (not unmounted) for smooth zoom in/out; `MilkyWayScene` progress `1` at globe view.
 - `GlassPanel` primitive for entry gate; reuse planned for chat polish.
 - Legacy entry files on disk (`AuroraBackground`, `HeroGlobe`, `PeerNodes`, etc.) — superseded by `MilkyWayScene`; safe to delete in cleanup.
+- **Return-home suppression** — dismiss with “Stay on the globe”; re-arm after zooming in ~0.85 or further out; connection-aware prompt copy.
+- **Gate enter progress** — `GATE_ENTER_PROGRESS` (~0.62) aligns map preview, scroll position, and return-home landing.
 
 **Still to do**
 
@@ -219,6 +228,23 @@ Not started. Considering a dot status indicator or connection icebreaker — wil
 
 ---
 
+### _(pending)_ — feat(ui): entry features, return-home, and chat/video gallery
+
+**Phase:** 2  
+**Files:** `app/components/EntryGate.tsx`, `app/components/ReturnHomePrompt.tsx`, `app/components/WorldMap.tsx`, `app/page.tsx`, `app/components/entry/*`, `lib/gate-features.ts`, `lib/return-home-copy.ts`, `app/globals.css`, `NOTES.md`
+
+- **`lib/gate-features.ts`** — feature copy + side-nav icons (map → enter screen, connect, chat, privacy).
+- **`app/components/entry/GateFeaturesSection.tsx`** — scrollable feature blocks with `GateFeatureBackdrop`, `GateFeatureIllustration`, footer **Back to enter**.
+- **`app/components/entry/GateSideNav.tsx`** — fixed nav on all screen sizes; scroll-to-section; map item targets enter-globe panel.
+- **`app/components/EntryGate.tsx`** — cosmic + features scroll phases; enter interactivity fix; return-home scroll-to-enter on mount (one-shot); smooth return fade.
+- **`app/components/ReturnHomePrompt.tsx`** + **`lib/return-home-copy.ts`** — zoom-out modal; copy varies by connection/video state.
+- **`app/page.tsx`** — `returnToHome()` / `handleLiveZoomChange()`; live cosmic backdrop tracks zoom; `gateScrollToEnter` for return landing.
+- **`app/components/WorldMap.tsx`** — live zoom events; preview reset on gate return; enter intro = direct `flyTo` (`INTRO_FLY_MS` ~5.2s), no spin.
+- **`app/components/entry/GateChatVideoGallery.tsx`** — chat + video SVG slides, dots, 5s auto-advance.
+- **`app/globals.css`** — feature backdrops, return fade, gallery/video art animations.
+
+---
+
 ### _(superseded)_ — feat(ui): redesign entry gate as Signal Void aurora landing
 
 Replaced by Milky Way Three.js scroll entry. Legacy files may still exist on disk but are no longer imported.
@@ -237,3 +263,4 @@ Replaced by Milky Way Three.js scroll entry. Legacy files may still exist on dis
 | `df3d52d`   | feat(map): connection lines, message orbs, and disconnect animation | 2        |
 | `e2bf58b`   | fix: restore connection on refresh and keep line synced to peer dot | 2        |
 | `2a1b392`   | feat(ui): Milky Way scroll entry with stars behind the globe        | 2        |
+| _(pending)_ | feat(ui): entry features, return-home, chat/video gallery           | 2        |

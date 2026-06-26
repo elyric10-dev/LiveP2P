@@ -90,7 +90,9 @@ export default function GateStatsBar({
   return (
     <div
       className={`gate-stats-bar absolute bottom-16 left-1/2 z-20 w-[calc(100%-2rem)] max-w-3xl -translate-x-1/2 transition-all duration-700 sm:bottom-20 ${
-        earthReached ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
+        earthReached
+          ? "translate-y-0 opacity-100"
+          : "pointer-events-none translate-y-4 opacity-0"
       }`}
     >
       <div className="flex flex-col divide-y divide-white/5 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-xl sm:flex-row sm:divide-x sm:divide-y-0">

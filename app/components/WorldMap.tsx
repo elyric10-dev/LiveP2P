@@ -3,22 +3,33 @@
 import { useEffect, useRef, useState } from "react";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Map as MapboxMap, Marker, GeoJSONSource } from "mapbox-gl";
-import type { ConnectionLine, DisconnectAnimation, MessageOrb, PeerDot } from "@/lib/types";
+import type {
+  ConnectionLine,
+  DisconnectAnimation,
+  MessageOrb,
+  PeerDot,
+} from "@/lib/types";
 
 const TOKEN =
   process.env.NEXT_PUBLIC_MAPBOX_TOKEN ??
   "pk.eyJ1IjoicHVsc2UtbWFwIiwiYSI6ImNrMDBkZW1vMDAwMDAwMDAifQ.AAAAAAAAAAAAAAAAAAAAAA";
 
 const GLOBE_CENTER: [number, number] = [0, 20];
-const GLOBE_ZOOM = 1.0;
+export const GLOBE_ZOOM = 1.0;
 /** Tiny speck at the start of the scroll zoom-in. */
 const PREVIEW_ZOOM_MIN = -2;
 const PREVIEW_ROTATE_AT = 0.88;
 const USER_ZOOM = 10;
 /** Below this zoom the map shows the globe — keep cosmic backdrop visible. */
-const GLOBE_VIEW_MAX_ZOOM = 5.5;
+export const GLOBE_VIEW_MAX_ZOOM = 5.5;
+
+export type LiveMapZoomInfo = {
+  zoom: number;
+  minZoom: number;
+};
 const ROTATE_DURATION_MS = 2800;
 const FLY_DURATION_MS = 2500;
+const INTRO_FLY_MS = 3000;
 const ORB_TRAVEL_MS = 1600;
 const DISCONNECT_MS = 1500;
 
@@ -180,7 +191,11 @@ function applyConnectionVisuals(
   map.setPaintProperty(CONNECTION_CORE, "line-gradient", undefined);
   map.setPaintProperty(CONNECTION_CORE, "line-color", v.core);
   map.setPaintProperty(CONNECTION_CORE, "line-width", v.coreWidth);
-  map.setPaintProperty(CONNECTION_CORE, "line-opacity", status === "rejected" ? 0.85 : 1);
+  map.setPaintProperty(
+    CONNECTION_CORE,
+    "line-opacity",
+    status === "rejected" ? 0.85 : 1,
+  );
   map.setPaintProperty(CONNECTION_CORE, "line-blur", 0);
   map.setPaintProperty(
     CONNECTION_CORE,
@@ -191,7 +206,11 @@ function applyConnectionVisuals(
   map.setPaintProperty(CONNECTION_GLOW, "line-color", v.glow);
   map.setPaintProperty(CONNECTION_GLOW, "line-width", v.glowWidth);
   map.setPaintProperty(CONNECTION_GLOW, "line-opacity", v.glowOpacity);
-  map.setPaintProperty(CONNECTION_GLOW, "line-blur", status === "pending" ? 2.5 : 1);
+  map.setPaintProperty(
+    CONNECTION_GLOW,
+    "line-blur",
+    status === "pending" ? 2.5 : 1,
+  );
   map.setPaintProperty(CONNECTION_GLOW, "line-dasharray", [1, 0]);
 }
 
@@ -494,7 +513,11 @@ function playDisconnectAnimation(
       emberMe.marker.setLngLat([mePos.lng, mePos.lat]);
       emberPeer.marker.setLngLat([peerPos.lng, peerPos.lat]);
       const emberFade =
-        raw < 0.05 ? raw / 0.05 : raw > 0.68 ? clamp01(1 - (raw - 0.68) / 0.2) : 1;
+        raw < 0.05
+          ? raw / 0.05
+          : raw > 0.68
+            ? clamp01(1 - (raw - 0.68) / 0.2)
+            : 1;
       emberMe.el.style.opacity = String(emberFade);
       emberPeer.el.style.opacity = String(emberFade);
       const emberScale = 0.5 + (1 - emberT) * 0.6;
@@ -628,7 +651,11 @@ function applyMapAtmosphere(map: MapboxMap, transparentSpace: boolean) {
       "star-intensity": 0,
     });
     if (map.getLayer("background")) {
-      map.setPaintProperty("background", "background-color", "rgba(0, 0, 0, 0)");
+      map.setPaintProperty(
+        "background",
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
     }
   } else {
     map.setFog({
@@ -661,6 +688,7 @@ export default function WorldMap({
   canConnect,
   onIntroComplete,
   onGlobeViewChange,
+  onZoomChange,
 }: {
   peers: PeerDot[];
   me: { lat: number; lng: number } | null;
@@ -678,6 +706,7 @@ export default function WorldMap({
   canConnect: boolean;
   onIntroComplete?: () => void;
   onGlobeViewChange?: (isGlobeView: boolean) => void;
+  onZoomChange?: (info: LiveMapZoomInfo) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapboxMap | null>(null);
@@ -696,6 +725,7 @@ export default function WorldMap({
   const onDisconnectCompleteRef = useRef(onDisconnectComplete);
   const onIntroCompleteRef = useRef(onIntroComplete);
   const onGlobeViewChangeRef = useRef(onGlobeViewChange);
+  const onZoomChangeRef = useRef(onZoomChange);
   const [ready, setReady] = useState(false);
   const [introComplete, setIntroComplete] = useState(false);
 
@@ -708,19 +738,31 @@ export default function WorldMap({
     onDisconnectCompleteRef.current = onDisconnectComplete;
     onIntroCompleteRef.current = onIntroComplete;
     onGlobeViewChangeRef.current = onGlobeViewChange;
+    onZoomChangeRef.current = onZoomChange;
   });
 
   const skipIntroRef = useRef(skipIntro);
   skipIntroRef.current = skipIntro;
   const previewModeRef = useRef(previewMode);
   previewModeRef.current = previewMode;
+  const wasPreviewModeRef = useRef(previewMode);
   const previewScrollRef = useRef(previewScrollProgress);
   previewScrollRef.current = previewScrollProgress;
   const transparentSpaceRef = useRef(transparentSpace);
   transparentSpaceRef.current = transparentSpace;
 
+  function emitLiveZoom(map: MapboxMap) {
+    if (previewModeRef.current || !introDoneRef.current) return;
+    onZoomChangeRef.current?.({
+      zoom: map.getZoom(),
+      minZoom: map.getMinZoom(),
+    });
+  }
+
   function syncGlobeView(map: MapboxMap) {
-    onGlobeViewChangeRef.current?.(map.getZoom() < GLOBE_VIEW_MAX_ZOOM);
+    const zoom = map.getZoom();
+    onGlobeViewChangeRef.current?.(zoom < GLOBE_VIEW_MAX_ZOOM);
+    emitLiveZoom(map);
   }
 
   function finishIntro(map: MapboxMap) {
@@ -733,31 +775,49 @@ export default function WorldMap({
     onIntroCompleteRef.current?.();
   }
 
+  function startLiveIntro(map: MapboxMap) {
+    if (flyStartedRef.current || introDoneRef.current) return;
+    if (!meCoordsRef.current) return;
+
+    flyStartedRef.current = true;
+    cancelRotateRef.current?.();
+    cancelRotateRef.current = null;
+    previewRotateCancelRef.current?.();
+    previewRotateCancelRef.current = null;
+
+    const { lat, lng } = meCoordsRef.current;
+
+    if (skipIntroRef.current || prefersReducedMotion()) {
+      map.jumpTo({ center: [lng, lat], zoom: USER_ZOOM, pitch: 0, bearing: 0 });
+      rotateCompleteRef.current = true;
+      finishIntro(map);
+      return;
+    }
+
+    map.flyTo({
+      center: [lng, lat],
+      zoom: USER_ZOOM,
+      duration: INTRO_FLY_MS,
+      essential: true,
+    });
+
+    const onMoveEnd = () => {
+      map.off("moveend", onMoveEnd);
+      rotateCompleteRef.current = true;
+      finishIntro(map);
+    };
+    map.on("moveend", onMoveEnd);
+    cancelRotateRef.current = () => {
+      map.off("moveend", onMoveEnd);
+      map.stop();
+    };
+  }
+
   function skipIntroJump(map: MapboxMap) {
     if (!meCoordsRef.current) return;
     const { lat, lng } = meCoordsRef.current;
     map.jumpTo({ center: [lng, lat], zoom: USER_ZOOM, pitch: 0, bearing: 0 });
     finishIntro(map);
-  }
-
-  function tryFlyToUser(map: MapboxMap) {
-    if (flyStartedRef.current || introDoneRef.current) return;
-    if (!rotateCompleteRef.current || !meCoordsRef.current) return;
-
-    flyStartedRef.current = true;
-    const { lat, lng } = meCoordsRef.current;
-    const reduced = prefersReducedMotion();
-
-    map.flyTo({
-      center: [lng, lat],
-      zoom: USER_ZOOM,
-      duration: reduced ? 800 : FLY_DURATION_MS,
-      essential: true,
-    });
-
-    map.once("moveend", () => {
-      finishIntro(map);
-    });
   }
 
   // After refresh: skip globe rotation and jump straight to the user.
@@ -774,6 +834,7 @@ export default function WorldMap({
     let cancelled = false;
     const markers = markersRef.current;
     let onZoom: (() => void) | null = null;
+    let onZoomEnd: (() => void) | null = null;
 
     (async () => {
       const mapboxgl = (await import("mapbox-gl")).default;
@@ -784,6 +845,8 @@ export default function WorldMap({
         style: "mapbox://styles/mapbox/dark-v11",
         center: GLOBE_CENTER,
         zoom: previewModeRef.current ? PREVIEW_ZOOM_MIN : GLOBE_ZOOM,
+        minZoom: 0,
+        maxZoom: 18,
         pitch: 0,
         bearing: 0,
         attributionControl: true,
@@ -797,8 +860,9 @@ export default function WorldMap({
         lockMapInteraction(map);
 
         onZoom = () => syncGlobeView(map);
+        onZoomEnd = () => emitLiveZoom(map);
         map.on("zoom", onZoom);
-        map.on("zoomend", onZoom);
+        map.on("zoomend", onZoomEnd);
         syncGlobeView(map);
 
         if (previewModeRef.current) {
@@ -806,21 +870,13 @@ export default function WorldMap({
         }
 
         if (skipIntroRef.current) {
-          rotateCompleteRef.current = true;
           if (meCoordsRef.current) skipIntroJump(map);
           return;
         }
 
-        if (prefersReducedMotion()) {
-          rotateCompleteRef.current = true;
-          tryFlyToUser(map);
-          return;
+        if (meCoordsRef.current) {
+          startLiveIntro(map);
         }
-
-        cancelRotateRef.current = rotateGlobe(map, ROTATE_DURATION_MS, () => {
-          rotateCompleteRef.current = true;
-          tryFlyToUser(map);
-        });
       });
 
       mapRef.current = map;
@@ -829,9 +885,9 @@ export default function WorldMap({
     return () => {
       cancelled = true;
       const map = mapRef.current;
-      if (map && onZoom) {
-        map.off("zoom", onZoom);
-        map.off("zoomend", onZoom);
+      if (map) {
+        if (onZoom) map.off("zoom", onZoom);
+        if (onZoomEnd) map.off("zoomend", onZoomEnd);
       }
       cancelRotateRef.current?.();
       cancelRotateRef.current = null;
@@ -900,41 +956,60 @@ export default function WorldMap({
     }
   }, [previewScrollProgress, previewMode, ready]);
 
-  // Gate preview → live handoff: stop slow spin and run the globe intro.
+  // Live → gate: reset intro and park the map on the preview globe.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+
+    const enteringPreview = previewMode && !wasPreviewModeRef.current;
+    wasPreviewModeRef.current = previewMode;
+    if (!enteringPreview || !introDoneRef.current) return;
+
+    introDoneRef.current = false;
+    flyStartedRef.current = false;
+    rotateCompleteRef.current = false;
+    setIntroComplete(false);
+    cancelRotateRef.current?.();
+    cancelRotateRef.current = null;
+    previewRotateCancelRef.current?.();
+    previewRotateCancelRef.current = null;
+    lockMapInteraction(map);
+    meMarkerRef.current?.remove();
+    meMarkerRef.current = null;
+    map.jumpTo({
+      center: GLOBE_CENTER,
+      zoom: zoomFromScrollProgress(previewScrollRef.current),
+      pitch: 0,
+      bearing: 0,
+    });
+  }, [previewMode, ready]);
+
+  // Gate preview → live handoff: spin and zoom to user together.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || previewMode || introDoneRef.current) return;
 
     previewRotateCancelRef.current?.();
     previewRotateCancelRef.current = null;
+    rotateCompleteRef.current = false;
 
     if (skipIntroRef.current) {
-      rotateCompleteRef.current = true;
       if (meCoordsRef.current) skipIntroJump(map);
       return;
     }
 
-    if (prefersReducedMotion()) {
-      rotateCompleteRef.current = true;
-      tryFlyToUser(map);
-      return;
+    if (meCoordsRef.current) {
+      startLiveIntro(map);
     }
-
-    flyStartedRef.current = false;
-    rotateCompleteRef.current = false;
-    cancelRotateRef.current = rotateGlobe(map, ROTATE_DURATION_MS, () => {
-      rotateCompleteRef.current = true;
-      tryFlyToUser(map);
-    });
   }, [previewMode, ready]);
 
-  // Store location and fly only after the full globe rotation finishes.
+  // Start intro once location is known (if handoff was waiting for geolocation).
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready || !me || previewMode) return;
     meCoordsRef.current = me;
-    tryFlyToUser(map);
-  }, [me, ready]);
+    startLiveIntro(map);
+  }, [me, ready, previewMode]);
 
   // User pin — visible during rotation once location is known.
   useEffect(() => {
@@ -1061,7 +1136,15 @@ export default function WorldMap({
       lineAnimStopRef.current?.();
       lineAnimStopRef.current = null;
     };
-  }, [connectionLine, connectedPeerLocation, disconnectAnim, me, peers, ready, introComplete]);
+  }, [
+    connectionLine,
+    connectedPeerLocation,
+    disconnectAnim,
+    me,
+    peers,
+    ready,
+    introComplete,
+  ]);
 
   // End connection: line implodes, burst at center, shards return to each pin.
   useEffect(() => {
@@ -1101,15 +1184,10 @@ export default function WorldMap({
     for (const orb of messageOrbs) {
       if (active.has(orb.id)) continue;
 
-      const stop = animateMessageOrb(
-        map,
-        orb,
-        prefersReducedMotion(),
-        () => {
-          active.delete(orb.id);
-          onOrbCompleteRef.current(orb.id);
-        },
-      );
+      const stop = animateMessageOrb(map, orb, prefersReducedMotion(), () => {
+        active.delete(orb.id);
+        onOrbCompleteRef.current(orb.id);
+      });
       active.set(orb.id, stop);
     }
 

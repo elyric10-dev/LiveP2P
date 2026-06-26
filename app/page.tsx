@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import EntryGate from "./components/EntryGate";
+import EntryGate, { GATE_ENTER_PROGRESS } from "./components/EntryGate";
 import MilkyWayScene from "./components/entry/MilkyWayScene";
-import WorldMap from "./components/WorldMap";
+import WorldMap, { GLOBE_ZOOM, type LiveMapZoomInfo } from "./components/WorldMap";
+import ReturnHomePrompt from "./components/ReturnHomePrompt";
+import { getReturnHomeCopy } from "@/lib/return-home-copy";
 import ConnectionPrompt from "./components/ConnectionPrompt";
 import ChatPanel, { type ChatMessage } from "./components/ChatPanel";
 import VideoPanel from "./components/VideoPanel";
@@ -31,6 +33,18 @@ type VideoState = "none" | "requesting" | "incoming" | "active";
 const REQUEST_TIMEOUT_MS = 30_000;
 const REJECTED_LINE_MS = 2_500;
 const RECONNECT_WAIT_MS = 30_000;
+/** How close to minZoom counts as “fully zoomed out”. */
+const ZOOM_AT_MIN_EPSILON = 0.08;
+/** Zoomed-out globe level that should offer return home (matches preview globe). */
+const RETURN_HOME_ZOOM = GLOBE_ZOOM + 0.3;
+/** Zoom in this much after dismissing before the prompt can show again. */
+const RETURN_HOME_REARM_DELTA = 0.85;
+
+function shouldOfferReturnHome(zoom: number, minZoom: number): boolean {
+  return (
+    zoom <= minZoom + ZOOM_AT_MIN_EPSILON || zoom <= RETURN_HOME_ZOOM
+  );
+}
 
 function connectionLineFromConn(conn: Conn): ConnectionLine | null {
   switch (conn.kind) {
@@ -90,7 +104,22 @@ export default function Home() {
   const [messageOrbs, setMessageOrbs] = useState<MessageOrb[]>([]);
   const [disconnectAnim, setDisconnectAnim] = useState<DisconnectAnimation | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [showReturnHome, setShowReturnHome] = useState(false);
+  const [gateScrollToEnter, setGateScrollToEnter] = useState(false);
+  const [returningHome, setReturningHome] = useState(false);
   const pendingNoticeRef = useRef<string | null>(null);
+  const returnHomeSuppressedRef = useRef(false);
+  const zoomWhenSuppressedRef = useRef<number | null>(null);
+  const lastLiveZoomRef = useRef(10);
+  const wasExploringRef = useRef(false);
+  const showReturnHomeRef = useRef(false);
+  const phaseRef = useRef(phase);
+  const mapIntroDoneRef = useRef(mapIntroDone);
+  const disconnectingRef = useRef(disconnecting);
+  phaseRef.current = phase;
+  mapIntroDoneRef.current = mapIntroDone;
+  disconnectingRef.current = disconnecting;
+  showReturnHomeRef.current = showReturnHome;
 
   function showNotice(text: string) {
     setNotice(text);
@@ -576,9 +605,79 @@ export default function Home() {
   }, [phase, sessionId, myLocation]);
 
   function handleEnter() {
-    setGateProgress(1);
+    setGateProgress(GATE_ENTER_PROGRESS);
+    setGateScrollToEnter(false);
     setMapIntroDone(false);
+    setShowReturnHome(false);
+    returnHomeSuppressedRef.current = false;
+    zoomWhenSuppressedRef.current = null;
+    wasExploringRef.current = false;
     setPhase("live");
+  }
+
+  function cleanupBeforeReturnHome() {
+    const c = connRef.current;
+    if (c.kind === "requesting") {
+      void sendSignal(sessionId, c.peerId, "end");
+    } else if (c.kind === "incoming") {
+      void sendSignal(sessionId, c.peerId, "decline");
+    } else if (c.kind === "connecting" || c.kind === "connected") {
+      void sendSignal(sessionId, c.peerId, "end");
+    }
+    teardown();
+  }
+
+  function returnToHome() {
+    setShowReturnHome(false);
+    cleanupBeforeReturnHome();
+    setReturningHome(true);
+    setGateScrollToEnter(true);
+    setGateProgress(GATE_ENTER_PROGRESS);
+    setPhase("gate");
+    setMapIntroDone(false);
+    setInGlobeView(true);
+    returnHomeSuppressedRef.current = false;
+    zoomWhenSuppressedRef.current = null;
+    wasExploringRef.current = false;
+  }
+
+  useEffect(() => {
+    if (!returningHome) return;
+    const timer = window.setTimeout(() => setReturningHome(false), 1000);
+    return () => window.clearTimeout(timer);
+  }, [returningHome]);
+
+  function dismissReturnHome() {
+    setShowReturnHome(false);
+    returnHomeSuppressedRef.current = true;
+    zoomWhenSuppressedRef.current = lastLiveZoomRef.current;
+  }
+
+  function handleLiveZoomChange({ zoom, minZoom }: LiveMapZoomInfo) {
+    lastLiveZoomRef.current = zoom;
+    if (zoom > RETURN_HOME_ZOOM + 0.5) {
+      wasExploringRef.current = true;
+    }
+
+    if (phaseRef.current !== "live" || !mapIntroDoneRef.current) return;
+    if (!wasExploringRef.current) return;
+    if (disconnectingRef.current || showReturnHomeRef.current) return;
+
+    if (returnHomeSuppressedRef.current && zoomWhenSuppressedRef.current !== null) {
+      const base = zoomWhenSuppressedRef.current;
+      if (zoom > base + RETURN_HOME_REARM_DELTA) {
+        returnHomeSuppressedRef.current = false;
+        zoomWhenSuppressedRef.current = null;
+      } else if (zoom < base - 0.05) {
+        // Zoomed out further after dismiss — allow prompt at the real limit.
+        returnHomeSuppressedRef.current = false;
+        zoomWhenSuppressedRef.current = null;
+      }
+    }
+
+    if (shouldOfferReturnHome(zoom, minZoom) && !returnHomeSuppressedRef.current) {
+      setShowReturnHome(true);
+    }
   }
 
   if (!sessionId) {
@@ -616,8 +715,11 @@ export default function Home() {
     <main className="fixed inset-0 overflow-hidden">
       {(inGate || phase === "live") && (
         <div
-          className="pointer-events-none fixed inset-0 z-0 bg-[#0a0a23] transition-opacity duration-700"
-          style={{ opacity: cosmicActive ? 1 : 0 }}
+          className="pointer-events-none fixed inset-0 z-0 bg-[#0a0a23]"
+          style={{
+            opacity: cosmicActive ? 1 : 0,
+            transition: returningHome ? "opacity 0.9s ease" : "opacity 0.7s ease",
+          }}
         >
           <MilkyWayScene progress={milkyProgress} />
           <div
@@ -639,7 +741,12 @@ export default function Home() {
         className={`fixed inset-0 ${cosmicActive ? "z-10" : "z-0"}`}
         style={
           inGate
-            ? { opacity: mapReveal, transition: "opacity 0.2s ease-out" }
+            ? {
+                opacity: mapReveal,
+                transition: returningHome
+                  ? "opacity 0.9s ease"
+                  : "opacity 0.2s ease-out",
+              }
             : undefined
         }
       >
@@ -655,6 +762,7 @@ export default function Home() {
             setInGlobeView(false);
           }}
           onGlobeViewChange={setInGlobeView}
+          onZoomChange={handleLiveZoomChange}
           connectionLine={connectionLine}
           connectedPeerLocation={connectedPeerLocation}
           disconnectAnim={inGate ? null : disconnectAnim}
@@ -671,6 +779,8 @@ export default function Home() {
           onEnter={handleEnter}
           onRequestLocation={requestLocation}
           onProgressChange={setGateProgress}
+          scrollToEnterOnMount={gateScrollToEnter}
+          onEnterScrollApplied={() => setGateScrollToEnter(false)}
         />
       )}
 
@@ -678,6 +788,16 @@ export default function Home() {
         <div className="absolute left-1/2 top-20 z-30 -translate-x-1/2 rounded-full bg-zinc-800/90 px-4 py-2 text-sm text-zinc-100 shadow-lg backdrop-blur">
           {notice}
         </div>
+      )}
+
+      {!inGate && showReturnHome && (
+        <ReturnHomePrompt
+          {...getReturnHomeCopy(conn, video)}
+          acceptLabel="Return to outer space"
+          declineLabel="Stay on the globe"
+          onAccept={returnToHome}
+          onDecline={dismissReturnHome}
+        />
       )}
 
       {!inGate && conn.kind === "requesting" && (
