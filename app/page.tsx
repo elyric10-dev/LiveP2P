@@ -1133,6 +1133,7 @@ export default function Home() {
           localStream={localStream}
           remoteStream={remoteStream}
           onEnd={endVideo}
+          onEndCall={endConnection}
         />
       )}
     </main>
