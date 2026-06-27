@@ -308,19 +308,57 @@ Replaced by Milky Way Three.js scroll entry. Legacy files may still exist on dis
 
 ---
 
+### `9c5980d` — fix(prod): eliminate Neon cold-start timeouts and silent join failures
+
+**Phase:** production  
+**Files:** `lib/prisma.ts`, `app/page.tsx`, `package.json`, `package-lock.json`, `vercel.json`
+
+**Why this was one of the hardest bugs to find:**
+
+The symptom was "locations timeout on production." But every layer tested correctly in isolation:
+
+- The Neon database answered queries normally.
+- All API routes (`/api/join`, `/api/poll`, `/api/stats`) returned HTTP 200.
+- The Mapbox token was valid. The client-side geolocation code was correct.
+- Local dev worked perfectly.
+
+The bug was invisible because it only manifested under a specific race condition between **three independent systems**, none of which flagged an error on their own:
+
+1. **Neon (free tier) auto-suspends compute after 5 minutes of inactivity.** The cold start takes ~21 seconds — longer than it looks from local testing because local dev re-uses a warm connection.
+
+2. **The pg TCP adapter's connection attempt waits for the compute to start, but the client has no timeout on `fetch()`.** So from the client's perspective the request was just… pending. No error, no 504, just silence for 21 seconds.
+
+3. **All join/poll failures were silently swallowed.** `join()` in the geolocation success callback had no try/catch, so if it threw, `setMyLocation()` was never called and the user's dot was **permanently not registered** on the map. `poll()` errors were caught with an empty `catch {}`. Neither surfaced anything in the UI.
+
+The net result: the first user to visit after 5 minutes of inactivity would click "ENTER THE GLOBE", see the map animation play, then sit on a live map that showed no peers and never registered their own presence — with no error message explaining why. A second or third refresh would also fail (Neon still waking) until ~21 seconds after the first request.
+
+**What made it deceptive:**
+- Running `/api/stats` manually after a warm period returned in 0.45s — Neon was already awake.
+- Only when deliberately waiting for Neon to go cold and retesting did `/api/stats` take 21.5s.
+- By the time you'd refresh to "check" whether it was working, Neon was warm again and everything looked fine.
+
+**Fixes:**
+- **`lib/prisma.ts`** — switched from `@prisma/adapter-pg` (TCP connection) to `PrismaNeonHttp` (stateless HTTP). Neon's HTTP proxy queues the request server-side while the compute wakes, so the 21-second wait happens inside the HTTP response, not as a connection race.
+- **`app/page.tsx`** — `join()` now retries up to 4× with exponential back-off; shows a persistent "Joining the map…" notice so the user knows something is happening; falls back to a full re-request if all retries fail.
+- **`vercel.json`** — added a cron job (`*/4 * * * *`) that pings `/api/stats` every 4 minutes, just under Neon's 5-minute suspend threshold. Prevents cold starts entirely under any normal traffic pattern.
+- **Removed** `pg`, `@prisma/adapter-pg`, `@types/pg`; added `@neondatabase/serverless`, `@prisma/adapter-neon`.
+
+---
+
 ## Commits (quick reference)
 
-| Commit      | Message                                                             | Phase    |
-| ----------- | ------------------------------------------------------------------- | -------- |
-| `d098fe4`   | Initialized                                                         | setup    |
-| `0a354aa`   | Initial                                                             | setup    |
-| `05fdaad`   | Fixed WebRTC "Connection failed (network)"                          | 1        |
-| `625baa3`   | Update Vercel deployment link                                       | delivery |
-| `12e0eaf`   | feat(ui): add cinematic globe intro on Enter Pulse                  | 2        |
-| `df3d52d`   | feat(map): connection lines, message orbs, and disconnect animation | 2        |
-| `e2bf58b`   | fix: restore connection on refresh and keep line synced to peer dot | 2        |
-| `2a1b392`   | feat(ui): Milky Way scroll entry with stars behind the globe        | 2        |
-| `c8afb40`   | feat(ui): entry features, return-home, chat/video gallery           | 2        |
-| `03cbfb4`   | fix(gate): live stats bar via GET /api/stats                          | 2        |
-| `ecac00b`   | fix(webrtc): reconnect handshake and video restore after page refresh | 2        |
-| `7b8600a`   | fix(webrtc): reconnect reliability for single/both refresh and stale SDP | 2    |
+| Commit      | Message                                                                   | Phase      |
+| ----------- | ------------------------------------------------------------------------- | ---------- |
+| `d098fe4`   | Initialized                                                               | setup      |
+| `0a354aa`   | Initial                                                                   | setup      |
+| `05fdaad`   | Fixed WebRTC "Connection failed (network)"                                | 1          |
+| `625baa3`   | Update Vercel deployment link                                             | delivery   |
+| `12e0eaf`   | feat(ui): add cinematic globe intro on Enter Pulse                        | 2          |
+| `df3d52d`   | feat(map): connection lines, message orbs, and disconnect animation       | 2          |
+| `e2bf58b`   | fix: restore connection on refresh and keep line synced to peer dot       | 2          |
+| `2a1b392`   | feat(ui): Milky Way scroll entry with stars behind the globe              | 2          |
+| `c8afb40`   | feat(ui): entry features, return-home, chat/video gallery                 | 2          |
+| `03cbfb4`   | fix(gate): live stats bar via GET /api/stats                              | 2          |
+| `ecac00b`   | fix(webrtc): reconnect handshake and video restore after page refresh     | 2          |
+| `7b8600a`   | fix(webrtc): reconnect reliability for single/both refresh and stale SDP  | 2          |
+| `9c5980d`   | fix(prod): eliminate Neon cold-start timeouts and silent join failures    | production |
